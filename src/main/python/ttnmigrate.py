@@ -104,14 +104,14 @@ if args.exportFromV2:
         sys.exit(1)
 
 # If the TTN v3 values were not provided for application id, device id, and device name
-# then default them to the TTN v2 values.
-if not args.v3AppId:
+# then default them to the TTN v2 values, if they were provided.
+if not args.v3AppId and args.v2AppId != None:
     args.v3AppId = args.v2AppId.replace("_", "-")
 
-if not args.v3DevId:
+if not args.v3DevId and args.v2DevId != None:
     args.v3DevId = args.v2DevId.replace("_", "-")
 
-if not args.v3DevName:
+if not args.v3DevName and args.v3DevId != None:
     args.v3DevName = args.v3DevId
 
 dev = None
