@@ -685,8 +685,8 @@ public class CLI implements Callable<Integer> {
         return 0;
     }
 
-	public static void main(final String[] args) {
-	    final int rc = new CommandLine(new CLI()).execute(args);
-	    System.exit(rc);
-	}
+    public static void main(final String[] args) {
+        final int rc = new CommandLine(new CLI()).execute(args);
+        System.exit(rc);
+    }
 }
