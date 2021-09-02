@@ -1,6 +1,7 @@
 package au.gov.nsw.dpi.cli;
 
 import java.io.BufferedWriter;
+import java.io.FileReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,6 +15,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.TimeZone;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -24,6 +28,11 @@ import org.thingsboard.server.common.data.Device;
 import org.thingsboard.server.common.data.kv.Aggregation;
 import org.thingsboard.server.common.data.kv.TsKvEntry;
 import org.thingsboard.server.common.data.page.TimePageLink;
+
+import com.google.gson.Gson;
+import com.ubidots.ApiClient;
+import com.ubidots.DataSource;
+import com.ubidots.Variable;
 
 import au.gov.nsw.dpi.model.DeviceInfo;
 import picocli.CommandLine;
@@ -60,45 +69,61 @@ public class CLI implements Callable<Integer> {
         return str.replaceAll("\\W", "_").replaceAll("_+", "_").replaceFirst("_$", "");
     }
 
-    private Path getDeviceDirectory(final DeviceInfo flSeen) throws Exception {
-        return dir.resolve(flSeen.readingsPrefix);
+    private Path getDeviceDirectory(final DeviceInfo devInfo) throws Exception {
+        return dir.resolve(devInfo.readingsPrefix);
     }
 
-    private void createDeviceSummaryDirectory(final DeviceInfo flSeen) throws Exception {
-        Files.createDirectories(getDeviceDirectory(flSeen));
+    private void createDeviceSummaryDirectory(final DeviceInfo devInfo) throws Exception {
+        Files.createDirectories(getDeviceDirectory(devInfo));
+    }
+
+    /**
+     * Create a minimal DeviceInfo object from the given Device.
+     *
+     * @param device the ThingsBoard Device to create the DeviceInfo from.
+     * @return the new DeviceInfo object.
+     */
+    private DeviceInfo createDeviceInfo(final Device device) {
+        final DeviceInfo devInfo = new DeviceInfo();
+        devInfo.tbDevName = device.getName();
+        devInfo.tbDevId = device.getId().getId().toString();
+
+        // Trim is early on to remove leading/trailing whitespace from our device names.
+        devInfo.readingsPrefix = sanitiseString(device.getName().trim());
+        return devInfo;
     }
 
     /**
      * Writes a JSON file with information about the device such as the first and
      * last telemetry times and a list of exported timeseries filenames.
      *
-     * @param deviceInfo the {@link DeviceInfo} object to be written.
+     * @param devInfo the {@link DeviceInfo} object to be written.
      * @throws Exception if there is an error writing the file.
      */
-    private void writeDeviceSummary(final DeviceInfo deviceInfo) throws Exception {
+    private void writeDeviceSummary(final DeviceInfo devInfo) throws Exception {
         final Path outputName;
         if (infoOnly) {
             // Write the info json files directly to the output directory when in
             // info only mode.
-            outputName = dir.resolve(deviceInfo.readingsPrefix + ".json");
+            outputName = dir.resolve(devInfo.readingsPrefix + ".json");
         } else {
-            createDeviceSummaryDirectory(deviceInfo);
-            outputName = getDeviceDirectory(deviceInfo).resolve(deviceInfo.readingsPrefix + ".json");
+            createDeviceSummaryDirectory(devInfo);
+            outputName = getDeviceDirectory(devInfo).resolve(devInfo.readingsPrefix + ".json");
         }
 
         // Make it easier to recognise invalid first or last seen values.
         final long now = System.currentTimeMillis();
-        if (deviceInfo.getFrom() > now) {
-            deviceInfo.setFrom(0);
-            deviceInfo.fromReadable = "Not available";
+        if (devInfo.getFrom() > now) {
+            devInfo.setFrom(0);
+            devInfo.fromReadable = "Not available";
         }
 
-        if (deviceInfo.getTo() < 1) {
-            deviceInfo.toReadable = "Not available";
+        if (devInfo.getTo() < 1) {
+            devInfo.toReadable = "Not available";
         }
 
         try (BufferedWriter br = Files.newBufferedWriter(outputName, StandardCharsets.UTF_8);) {
-            br.write(deviceInfo.toString());
+            br.write(devInfo.toString());
         }
     }
 
@@ -109,14 +134,9 @@ public class CLI implements Callable<Integer> {
      * @throws Exception if an error occurs reading from ThingsBoard or writing files.
      */
     private void exportDevice(final Device device) throws Exception {
-        final DeviceInfo devInfo = new DeviceInfo();
-        devInfo.tbDevName = device.getName();
-        devInfo.tbDevId = device.getId().getId().toString();
+        logger.info("Exporting device {}", device.getName());
 
-        logger.info("Processing device {}", device.getName());
-
-        // Trim is early on to remove leading/trailing whitespace from our device names.
-        devInfo.readingsPrefix = sanitiseString(device.getName().trim());
+        final DeviceInfo devInfo = createDeviceInfo(device);
 
         final List<String> timeseriesKeys;
         if (keyNames != null && keyNames.length > 0) {
@@ -176,6 +196,79 @@ public class CLI implements Callable<Integer> {
     }
 
     /**
+     * Retrieve all timeseries values for the given keys and date range.
+     *
+     * @param device the device of interest.
+     * @param devInfo a {@link DeviceInfo} object which is updated with earliest/latest timestamps.
+     * @param keys a list of timeseries keys to export.
+     * @param earliest the earliest timestamp to export.
+     * @param latest the latest timestamp to export.
+     *
+     * @return all timeseries values for the given keys and date range.
+     */
+    private Map<Long, List<TsKvEntry>> getTimeseriesEntries(final Device device, final DeviceInfo devInfo, final List<String> keys, final long earliest, final long latest) {
+        final int limit = 10000;
+
+        long end = latest;
+
+        final Map<Long, List<TsKvEntry>> tsMap = new HashMap<>();
+
+        while (true) {
+            logger.debug("Looking for messages between {} and {}", sdf.format(new Date(earliest)), sdf.format(new Date(end)));
+
+            final TimePageLink pageLink = new TimePageLink(limit, earliest, end);
+            final List<TsKvEntry> tsl = rc.getTimeseries(device.getId(), keys, 0L, Aggregation.NONE, pageLink);
+
+            // getTimeseries returns results with the latest reading at the head of the list - element 0, and the earliest
+            // reading at the tail, ie size() - 1.
+            final int sz = tsl.size();
+            logger.debug("Received {} messages", sz);
+
+            if (sz > 0) {
+                final long ts1 = tsl.get(0).getTs(); // End of window - latest date
+                final long ts2 = tsl.get(sz-1).getTs(); // Start of window - earliest date
+
+                logger.debug("Date range of messages is {} to {}", sdf.format(new Date(ts2)), sdf.format(new Date(ts1)));
+
+                if (ts1 > devInfo.getTo()) {
+                    devInfo.setTo(ts1);
+                }
+
+                if (ts2 < devInfo.getFrom()) {
+                    devInfo.setFrom(ts2);
+                }
+
+                for (final TsKvEntry tskv : tsl) {
+                    if (StringUtils.isEmpty(tskv.getValueAsString())) {
+                        continue;
+                    }
+
+                    final List<TsKvEntry> values;
+                    if (tsMap.containsKey(tskv.getTs())) {
+                        values = tsMap.get(tskv.getTs());
+                    } else {
+                        values = new ArrayList<>();
+                        tsMap.put(tskv.getTs(), values);
+                    }
+
+                    values.add(tskv);
+                }
+
+                // Don't start on the same reading in the next batch.
+                end = ts2 - 1;
+            }
+
+            // Less than a full set of readings means we now have the earliest reading
+            // and can finish up for this field.
+            if (sz < limit) {
+                break;
+            }
+        }
+
+        return tsMap;
+    }
+
+    /**
      * Export a set of keys in a format suitable to push to ThingsBoard via the API.
      *
      * @param device the device of interest.
@@ -185,66 +278,11 @@ public class CLI implements Callable<Integer> {
      * @param latest the latest timestamp to export.
      */
     private void exportToJSON(final Device device, final DeviceInfo devInfo, final List<String> keys, final long earliest, final long latest) {
-        final int limit = 10000;
-
         try {
             final Path outputName = getDeviceDirectory(devInfo).resolve("timeseries.json");
             final BufferedWriter br = infoOnly ? null : Files.newBufferedWriter(outputName, StandardCharsets.UTF_8);
 
-            long end = latest;
-
-            final Map<Long, List<TsKvEntry>> tsMap = new HashMap<>();
-
-            while (true) {
-                logger.debug("Looking for messages between {} and {}", sdf.format(new Date(earliest)), sdf.format(new Date(end)));
-
-                final TimePageLink pageLink = new TimePageLink(limit, earliest, end);
-                final List<TsKvEntry> tsl = rc.getTimeseries(device.getId(), keys, 0L, Aggregation.NONE, pageLink);
-
-                // getTimeseries returns results with the latest reading at the head of the list - element 0, and the earliest
-                // reading at the tail, ie size() - 1.
-                final int sz = tsl.size();
-                logger.debug("Received {} messages", sz);
-
-                if (sz > 0) {
-                    final long ts1 = tsl.get(0).getTs(); // End of window - latest date
-                    final long ts2 = tsl.get(sz-1).getTs(); // Start of window - earliest date
-
-                    logger.debug("Date range of messages is {} to {}", sdf.format(new Date(ts2)), sdf.format(new Date(ts1)));
-
-                    if (ts1 > devInfo.getTo()) {
-                        devInfo.setTo(ts1);
-                    }
-
-                    if (ts2 < devInfo.getFrom()) {
-                        devInfo.setFrom(ts2);
-                    }
-
-                    for (final TsKvEntry tskv : tsl) {
-                        List<TsKvEntry> values;
-                        if (tsMap.containsKey(tskv.getTs())) {
-                            values = tsMap.get(tskv.getTs());
-                        } else {
-                            values = new ArrayList<>();
-                            tsMap.put(tskv.getTs(), values);
-                        }
-
-                        if ( ! StringUtils.isEmpty(tskv.getValueAsString())) {
-                            values.add(tskv);
-                        }
-                    }
-
-                    // Don't start on the same reading in the next batch.
-                    end = ts2 - 1;
-                }
-
-                // Less than a full set of readings means we now have the earliest reading
-                // and can finish up for this field.
-                if (sz < limit) {
-                    break;
-                }
-            }
-
+            final Map<Long, List<TsKvEntry>> tsMap = getTimeseriesEntries(device, devInfo, keys, earliest, latest);
             if (tsMap.size() > 0) {
                 // A set of longs will get naturally sorted from smallest to largest, ie
                 // earliest timestamp to latest.
@@ -385,6 +423,126 @@ public class CLI implements Callable<Integer> {
         }
     }
 
+    private void migrateDevice(final Device device) throws Exception {
+        logger.info("Migrating device {}", device.getName());
+
+        // Create enough of a DeviceInfo object to get the directory where the json file can be read.
+        DeviceInfo devInfo = createDeviceInfo(device);
+        final Path outputName = getDeviceDirectory(devInfo).resolve(devInfo.readingsPrefix + ".json");
+        final Gson gson = new Gson();
+        try (FileReader fr = new FileReader(outputName.toFile())) {
+            devInfo = gson.fromJson(fr, DeviceInfo.class);
+        }
+
+        final ApiClient u = new ApiClient("BBFF-f7dd7a2b7c89889ad04aa67e18048d969e6");
+        final DataSource[] existingDataSources = u.getDataSources();
+        Thread.sleep(1100);
+        boolean devExists = false;
+        DataSource dataSource = null;
+        for (final var ds : existingDataSources) {
+            if (devInfo.tbDevName.equalsIgnoreCase(ds.getName())) {
+                logger.info("Device {} already exists in Ubidots", ds.getName());
+                dataSource = ds;
+                devExists = true;
+                break;
+            }
+        }
+
+        if ( ! devExists) {
+            logger.info("Creating device {} in Ubidots", devInfo.tbDevName.trim());
+            dataSource = u.createDataSource(devInfo.tbDevName.trim());
+            Thread.sleep(1100);
+        }
+
+        final Variable[] existingVars = dataSource.getVariables();
+        Thread.sleep(1100);
+        final Map<String, Variable> variables = new HashMap<>();
+        for (final var v : existingVars) {
+            variables.put(v.getName(), v);
+        }
+
+        final ExecutorService es = Executors.newFixedThreadPool(devInfo.fieldToFilename.size());
+        for (final var tsKey : devInfo.fieldToFilename.keySet()) {
+            Variable v = null;
+            if (variables.containsKey(tsKey)) {
+                logger.info("Variable {} already exists.", tsKey);
+                v = variables.get(tsKey);
+            } else {
+                logger.info("Creating variable {}.", tsKey);
+                v = dataSource.createVariable(tsKey);
+                Thread.sleep(1100);
+            }
+
+            final DataSource fds = dataSource;
+            final Variable fv = v;
+            final Path csv = getDeviceDirectory(devInfo).resolve(devInfo.fieldToFilename.get(tsKey));
+
+            es.submit(new Callable<Boolean>() {
+                @Override
+                public Boolean call() {
+                    try {
+                        final ApiClient apiClient = new ApiClient("BBFF-f7dd7a2b7c89889ad04aa67e18048d969e6");
+                        final DataSource xds = apiClient.getDataSource(fds.getId());
+                        final Variable[] xvs = xds.getVariables();
+                        Variable xv = null;
+                        for (final var z : xvs) {
+                            if (z.getName().equals(fv.getName())) {
+                                xv = z;
+                                break;
+                            }
+                        }
+
+                        if (Files.isReadable(csv) && Files.isRegularFile(csv)) {
+                            final var lines = Files.readAllLines(csv);
+                            int i = 0;
+                            final int lineCount = lines.size();
+                            int linesLeft = lineCount;
+
+                            while (i < lineCount) {
+                                int limit = 200;
+                                if (linesLeft < limit) {
+                                    limit = linesLeft;
+                                }
+
+                                final var values = new double[limit];
+                                final var timestamps = new long[limit];
+
+                                for (int j = 0; j < limit; j++) {
+                                    final var line = lines.get(i);
+                                    final var cols = line.split(",");
+                                    timestamps[j] = Long.parseLong(cols[0]);
+                                    values[j] = Double.parseDouble(cols[1]);
+                                    i++;
+                                }
+
+
+                                final int q = lineCount - linesLeft + limit;
+                                final int p = (int)((float)q / (float)lineCount * 100.0f);
+                                logger.info("Saving {} values for key {}. {}%", limit, tsKey, p);
+                                xv.saveValues(values, timestamps);
+                                Thread.sleep(300);
+
+                                linesLeft -= limit;
+                            }
+                            return true;
+                        } else {
+                            logger.warn("Could not read CSV file for key {}.", tsKey);
+                        }
+                    } catch (final Exception e) {
+                        e.printStackTrace();
+                    }
+
+                    return false;
+                }
+            });
+        }
+
+        es.shutdown();
+        while ( ! es.isTerminated()) {
+            es.awaitTermination(1, TimeUnit.MINUTES);
+        }
+    }
+
     @Option(names = { "-n", "--devname" }, description = "the ThingsBoard name for the device, may be a comma separated list of device names")
     private String[] deviceNamesArray;
 
@@ -423,6 +581,9 @@ public class CLI implements Callable<Integer> {
 
     @Option(names = { "-t", "--to" }, description = "the latest timeseries entry to retrieve in UNIX-epoch-encoding, ie a long value")
     private String toStr;
+
+    @Option(names = { "-m" }, description = "migrate timeseries to Ubidots using exported data for the named device")
+    private boolean migrateDevice;
 
     // This gets populated from either deviceNamesArray or deviceNamesFile.
     private final List<String> deviceNamesList = new ArrayList<>();
@@ -469,6 +630,9 @@ public class CLI implements Callable<Integer> {
             }
         }
 
+        rc = new RestClient("https://" + host);
+        rc.login(user, password);
+
         try {
             if (deviceNamesFile != null) {
                 if (deviceNamesArray != null) {
@@ -492,15 +656,16 @@ public class CLI implements Callable<Integer> {
                 }
             }
 
-            rc = new RestClient("https://" + host);
-            rc.login(user, password);
-
             for (final String n : deviceNamesList) {
                 try {
                     final Optional<Device> dev = rc.findDevice(n);
                     dev.ifPresent(d -> {
                         try {
-                            exportDevice(d);
+                            if (migrateDevice) {
+                                migrateDevice(d);
+                            } else {
+                                exportDevice(d);
+                            }
                         } catch (final Exception e) {
                             e.printStackTrace();
                         }
