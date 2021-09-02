@@ -9,21 +9,13 @@
 	<version>1.0.0</version>
 	<url>https://farmdecisiontech.net.au</url>
 	<description>FarmDecisionTech ThingsBoard timeseries data exporter</description>
-<!-- 
-	<scm>
-		<connection>scm:git:git@github.com:swagger-api/swagger-codegen.git</connection>
-		<developerConnection>scm:git:git@github.com:swagger-api/swagger-codegen.git</developerConnection>
-		<url>https://github.com/swagger-api/swagger-codegen</url>
-	</scm>
 
-	<licenses>
-		<license>
-			<name>Unlicense</name>
-			<url>https://github.com/thingsboard/thingsboard/blob/master/LICENSE</url>
-			<distribution>repo</distribution>
-		</license>
-	</licenses>
--->
+	<scm>
+        <connection>scm:git:git@github.com:DPIclimate/thingsboard-export.git</connection>
+        <developerConnection>scm:git:git@github.com:DPIclimate/thingsboard-export.git</developerConnection>
+        <url>https://github.com/DPIclimate/thingsboard-export</url>
+    </scm>
+
 	<repositories>
 		<repository>
 			<id>thingsboard</id>
@@ -34,39 +26,19 @@
 	<build>
 		<plugins>
 			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-enforcer-plugin</artifactId>
-				<version>3.0.0-M1</version>
-				<executions>
-					<execution>
-						<id>enforce-maven</id>
-						<goals>
-							<goal>enforce</goal>
-						</goals>
-						<configuration>
-							<rules>
-								<requireMavenVersion>
-									<version>2.2.0</version>
-								</requireMavenVersion>
-							</rules>
-						</configuration>
-					</execution>
-				</executions>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>versions-maven-plugin</artifactId>
+				<version>2.5</version>
+				<configuration>
+					<generateBackupPoms>false</generateBackupPoms>
+				</configuration>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-surefire-plugin</artifactId>
-				<version>2.12</version>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.8.0</version>
 				<configuration>
-					<systemProperties>
-						<property>
-							<name>loggerPath</name>
-							<value>conf/log4j.properties</value>
-						</property>
-					</systemProperties>
-					<argLine>-Xms512m -Xmx1500m</argLine>
-					<parallel>methods</parallel>
-					<forkMode>pertest</forkMode>
+					<release>11</release>
 				</configuration>
 			</plugin>
 			<plugin>
@@ -83,8 +55,6 @@
 					</execution>
 				</executions>
 			</plugin>
-
-			<!-- attach test jar -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-jar-plugin</artifactId>
@@ -93,7 +63,6 @@
 					<execution>
 						<goals>
 							<goal>jar</goal>
-							<goal>test-jar</goal>
 						</goals>
 					</execution>
 				</executions>
@@ -107,66 +76,8 @@
 					</archive>
 				</configuration>
 			</plugin>
-
-			<plugin>
-				<groupId>org.codehaus.mojo</groupId>
-				<artifactId>build-helper-maven-plugin</artifactId>
-				<version>1.10</version>
-				<executions>
-					<execution>
-						<id>add_sources</id>
-						<phase>generate-sources</phase>
-						<goals>
-							<goal>add-source</goal>
-						</goals>
-						<configuration>
-							<sources>
-								<source>
-									src/main/java</source>
-							</sources>
-						</configuration>
-					</execution>
-					<execution>
-						<id>add_test_sources</id>
-						<phase>generate-test-sources</phase>
-						<goals>
-							<goal>add-test-source</goal>
-						</goals>
-						<configuration>
-							<sources>
-								<source>
-									src/test/java</source>
-							</sources>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
 		</plugins>
 	</build>
-
-	<profiles>
-		<profile>
-			<id>sign-artifacts</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-gpg-plugin</artifactId>
-						<version>1.5</version>
-						<executions>
-							<execution>
-								<id>sign-artifacts</id>
-								<phase>verify</phase>
-								<goals>
-									<goal>sign</goal>
-								</goals>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-	</profiles>
 
 	<dependencies>
 		<dependency>
@@ -193,7 +104,11 @@
 			<groupId>org.thingsboard</groupId>
 			<artifactId>rest-client</artifactId>
 			<version>2.5.4</version>
-			<!-- <version>3.2.2</version> -->
+		</dependency>
+		<dependency>
+			<groupId>com.ubidots</groupId>
+			<artifactId>ubidots-java</artifactId>
+			<version>1.6.7-SNAPSHOT</version>
 		</dependency>
 		<dependency>
 			<groupId>info.picocli</groupId>
@@ -206,16 +121,9 @@
 			<version>4.6.1</version>
 			<scope>compile</scope>
 		</dependency>
-		<!-- test dependencies -->
-		<dependency>
-			<groupId>junit</groupId>
-			<artifactId>junit</artifactId>
-			<version>${junit-version}</version>
-			<scope>test</scope>
-		</dependency>
 	</dependencies>
 	<properties>
-		<java.version>1.8</java.version>
+		<java.version>11</java.version>
 		<maven.compiler.source>${java.version}</maven.compiler.source>
 		<maven.compiler.target>${java.version}</maven.compiler.target>
 		<gson-fire-version>1.8.5</gson-fire-version>
