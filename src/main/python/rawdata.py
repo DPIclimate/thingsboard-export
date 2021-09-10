@@ -62,10 +62,6 @@ def v3Parser(msg : dict) -> dict:
 
 offset = 0
 batchSize = 10000
-msgCount = 0
-dupCount = 0
-
-cwd = os.getcwd()
 
 pg = psycopg2.connect("dbname=broker user=postgres password=example")
 pgCursor = pg.cursor()
@@ -80,7 +76,6 @@ with connect(host=MYSQL_HOST, user=MYSQL_USER, password=MYSQL_PWD, database="bro
             offset = offset + len(result)
             
             for row in result:
-                msgCount = msgCount + 1
                 uid = row[0]
                 ttnMsg = json.loads(row[1])
 
@@ -106,5 +101,3 @@ with connect(host=MYSQL_HOST, user=MYSQL_USER, password=MYSQL_PWD, database="bro
 
 pgCursor.close()
 pg.close()
-
-print(str(dupCount) + " duplicate messages.")
