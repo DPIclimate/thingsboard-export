@@ -23,7 +23,6 @@ def ubiGetToken(apiKey: str) -> str:
     return body["token"]
 
 def ubiGetDevice(ubiToken: str, devId: str) -> dict:
-    # 'X-Auth-Token: BBAU-...' https://industrial.api.ubidots.com/api/v1.6/devices/00137a10000057e2
     headers = { "X-Auth-Token": ubiToken }
     response = requests.get(f"https://industrial.api.ubidots.com/api/v1.6/devices/{devId}", headers=headers)
 
@@ -61,8 +60,7 @@ def ttnGetDevice(appId: str, devId: str) -> dict:
     return json.loads(result.stdout)
 
 
-# Use the API Key for the ubidots user, not the Default token
-ubiToken = ubiGetToken("BBAU-43e381112a63f10e45b1cd13378259f2883")
+ubiToken = ubiGetToken(config["ubiApiKey"])
 
 ttnAppId = sys.argv[1]
 
