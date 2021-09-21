@@ -59,7 +59,7 @@ def ttnGetDevice(appId: str, devId: str) -> dict:
     return json.loads(result.stdout)
 
 
-ubiToken = ubiGetToken(config["ubiApiKey"])
+ubiToken = ubiGetToken(config["ubidots"]["apikey"])
 
 ttnAppId = sys.argv[1]
 

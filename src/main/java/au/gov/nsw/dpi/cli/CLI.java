@@ -2,9 +2,11 @@ package au.gov.nsw.dpi.cli;
 
 import java.io.BufferedWriter;
 import java.io.FileReader;
+import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -423,6 +425,14 @@ public class CLI implements Callable<Integer> {
         }
     }
 
+    /**
+     * Push timeseries data to ubidots from an exported device.
+     *
+     *  <p>The device info and timeseries filenames are read from a device info json file.</p>
+     *
+     * @param device
+     * @throws Exception
+     */
     private void migrateDevice(final Device device) throws Exception {
         logger.info("Migrating device {}", device.getName());
 
@@ -434,8 +444,19 @@ public class CLI implements Callable<Integer> {
             devInfo = gson.fromJson(fr, DeviceInfo.class);
         }
 
-        final ApiClient u = new ApiClient("BBFF-f7dd7a2b7c89889ad04aa67e18048d969e6");
+        // TODO: Add a deveui field to the device info object that can be manually added
+        // after the export is done. Then prefer that field over the TB device name when
+        // comparing to Ubidots datasources because when they are created by the ubifunction
+        // it uses the deveui as the datasource (or device) name.
+
+        final Map<String, String> ubidotsConfig = (Map<String, String>)config.get("ubidots");
+        final String ubiApiKey = ubidotsConfig.get("apikey");
+        final ApiClient u = new ApiClient(ubiApiKey);
         final DataSource[] existingDataSources = u.getDataSources();
+
+        // The calls to Thread.sleep are to keep the rate of API calls to below
+        // the ubidots-imposed limit of 4/second.
+
         Thread.sleep(1100);
         boolean devExists = false;
         DataSource dataSource = null;
@@ -481,7 +502,11 @@ public class CLI implements Callable<Integer> {
                 @Override
                 public Boolean call() {
                     try {
-                        final ApiClient apiClient = new ApiClient("BBFF-f7dd7a2b7c89889ad04aa67e18048d969e6");
+                        // Create and use a new ApiClient object so each thread gets its own API token
+                        // rather than sharing one. This allows each thread to make 4 calls per second
+                        // instead of all threads being limited to 4 calls a second in total.
+                        //final ApiClient apiClient = new ApiClient("BBFF-f7dd7a2b7c89889ad04aa67e18048d969e6");
+                        final ApiClient apiClient = new ApiClient(ubiApiKey);
                         final DataSource xds = apiClient.getDataSource(fds.getId());
                         final Variable[] xvs = xds.getVariables();
                         Variable xv = null;
@@ -499,6 +524,8 @@ public class CLI implements Callable<Integer> {
                             int linesLeft = lineCount;
 
                             while (i < lineCount) {
+                                // 200 values at a time to keep under the 10kb limit
+                                // ubidots has for the http post body.
                                 int limit = 200;
                                 if (linesLeft < limit) {
                                     limit = linesLeft;
@@ -514,7 +541,6 @@ public class CLI implements Callable<Integer> {
                                     values[j] = Double.parseDouble(cols[1]);
                                     i++;
                                 }
-
 
                                 final int q = lineCount - linesLeft + limit;
                                 final int p = (int)((float)q / (float)lineCount * 100.0f);
@@ -552,13 +578,13 @@ public class CLI implements Callable<Integer> {
     @Option(names = { "-k", "--keys" }, description = "the ThingsBoard timeseries key names to export, may be a comma separated list of multiple field names")
     private String[] keyNames;
 
-    @Option(names = { "-h", "--url" }, defaultValue="ThingsBoard.farmdecisiontech.net.au", description = "the ThingsBoard hostname; include the port if necessary such as some.host:9090")
+    @Option(names = { "-h", "--url" }, defaultValue="thingsBoard.farmdecisiontech.net.au", description = "the ThingsBoard hostname; include the port if necessary such as some.host:9090")
     private String host;
 
-    @Option(names = { "-u", "--user" }, required = true, description = "the ThingsBoard username")
+    @Option(names = { "-u", "--user" }, description = "the ThingsBoard username")
     private String user;
 
-    @Option(names = { "-p", "--password" }, required = true, description = "the ThingsBoard password")
+    @Option(names = { "-p", "--password" }, description = "the ThingsBoard password")
     private String password;
 
     @Option(names = { "-i", "--info" }, description = "only write the info file for each named device")
@@ -582,11 +608,16 @@ public class CLI implements Callable<Integer> {
     @Option(names = { "-t", "--to" }, description = "the latest timeseries entry to retrieve in UNIX-epoch-encoding, ie a long value")
     private String toStr;
 
+    @Option(names = { "-c", "--config" }, description = "path to the JSON config file")
+    private Path configJson;
+
     @Option(names = { "-m" }, description = "migrate timeseries to Ubidots using exported data for the named device")
     private boolean migrateDevice;
 
     // This gets populated from either deviceNamesArray or deviceNamesFile.
     private final List<String> deviceNamesList = new ArrayList<>();
+
+    private Map<?, ?> config;
 
     /**
      * picocli calls this method after parsing the arguments. Program logic starts here.
@@ -594,6 +625,34 @@ public class CLI implements Callable<Integer> {
     @Override
     public Integer call() throws Exception {
         sdf.setTimeZone(TimeZone.getTimeZone("AEST"));
+
+        if (configJson != null) {
+            if ( ! (Files.exists(configJson) && Files.isRegularFile(configJson) && Files.isReadable(configJson))) {
+                System.err.println("Cannot read file " + configJson.toString());
+                return 1;
+            }
+
+            final Gson gson = new Gson();
+            final Reader reader = Files.newBufferedReader(Paths.get(configJson.toString()));
+            config = gson.fromJson(reader, Map.class);
+
+            final Map<String, String> tbConfig = (Map<String, String>)config.get("thingsboard");
+            if (StringUtils.isEmpty(host)) {
+                host = tbConfig.get("host");
+                final String port = tbConfig.get("port");
+                if (StringUtils.isNotEmpty(port)) {
+                    host = host + ":" + port;
+                }
+            }
+
+            if (StringUtils.isEmpty(user)) {
+                user = tbConfig.get("user");
+            }
+
+            if (StringUtils.isEmpty(password)) {
+                password = tbConfig.get("password");
+            }
+        }
 
         //
         // A few kludges here.
