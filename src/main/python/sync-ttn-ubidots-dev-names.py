@@ -2,7 +2,6 @@ import json
 import requests
 import subprocess
 import sys
-from ubidots import ApiClient
 
 
 config = {}
