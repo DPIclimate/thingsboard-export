@@ -8,9 +8,9 @@ from datetime import datetime, tzinfo, timezone
 from dateutil.parser import parse
 from mysql.connector import connect
 
-MYSQL_HOST = "localhost"
-MYSQL_USER = "root"
-MYSQL_PWD = "example"
+config = {}
+with open("config.json", "r") as configFile:
+    config = json.load(configFile)
 
 def getTimeStamp(ts : str) -> str:
     # Truncate timestamps with more than 6 fractional second digits
@@ -63,10 +63,10 @@ def v3Parser(msg : dict) -> dict:
 offset = 0
 batchSize = 10000
 
-pg = psycopg2.connect("dbname=broker user=postgres password=example")
+pg = psycopg2.connect(f"host={config['postgres']['host']} dbname={config['postgres']['database']} user={config['postgres']['user']} password={config['postgres']['password']}")
 pgCursor = pg.cursor()
 
-with connect(host=MYSQL_HOST, user=MYSQL_USER, password=MYSQL_PWD, database="broker") as connection:
+with connect(host=config['mysql']['host'], user=config['mysql']['user'], password=config['mysql']['password'], database=config['mysql']['database']) as connection:
     while True:
         with connection.cursor() as cursor:
             print("#", end="", flush=True)
@@ -74,7 +74,7 @@ with connect(host=MYSQL_HOST, user=MYSQL_USER, password=MYSQL_PWD, database="bro
             cursor.execute("select uid, payload from RawData order by uid limit %s, %s", (offset, batchSize))
             result = cursor.fetchall()
             offset = offset + len(result)
-            
+
             for row in result:
                 uid = row[0]
                 ttnMsg = json.loads(row[1])
@@ -86,12 +86,11 @@ with connect(host=MYSQL_HOST, user=MYSQL_USER, password=MYSQL_PWD, database="bro
                 else:
                     print("\nCould not parse message: " + row[1])
                     continue
-                
+
                 ts = datetime.fromisoformat(msg["time"])
 
                 values = (uid, ts, msg["hwSerial"], json.dumps(msg), json.dumps(ttnMsg))
                 pgCursor.execute("INSERT INTO msgs (uid, ts, deveui, summary, msg) VALUES (%s, %s, %s, %s, %s)", values)
-                
 
             cursor.close()
             pg.commit()
