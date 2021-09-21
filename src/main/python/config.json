@@ -1,6 +1,5 @@
 {
     "bindir": "/usr/local/bin",
-    "ubiApiKey": "BBAU-...",
     "mysql": {
         "host": "localhost",
         "port": "3306",
@@ -14,5 +13,14 @@
         "user": "postgres",
         "password": "...",
         "database": "broker"
+    },
+    "thingsboard": {
+        "host": "...",
+        "port": "",
+        "user": "...",
+        "password": "..."
+    },
+    "ubidots": {
+        "apikey": "BBAU-..."
     }
 }
