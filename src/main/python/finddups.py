@@ -4,6 +4,7 @@ import os
 import os.path
 import psycopg2
 
+from collections import deque
 from datetime import datetime, tzinfo, timezone
 from dateutil.parser import parse
 from mysql.connector import connect
@@ -23,86 +24,47 @@ def getPostgresConnection():
     return psycopg2.connect(host=postgresCfg["host"], port=postgresCfg["port"], user=postgresCfg["user"], password=postgresCfg["password"], dbname=postgresCfg["database"])
 
 
-def getNextBatch(cursor, maxUid, offset):
-    cursor.execute("select uid, deveui, msg from msgs order by uid where uid < %s limit %s offset %s", (maxUid, batchSize, offset))
+def getNextBatch(cursor, deveui, offset):
+    cursor.execute("select uid, msg from msgs where deveui = %s order by uid limit %s offset %s", (deveui, batchSize, offset))
     result = cursor.fetchall()
     return result
 
-
-def populateMsgDict(maxUid):
+def findDupes(conn, deveui):
+    dupCount = 0
     offset = 0
-    lastBatchSize = 0
-    
-    print("Initialising last message map.")
-    
+
+    # The deque will only hold the n most recent messages. Adding a new unique
+    # message will remove the oldest one from the other end of the queue.
+    recentMsgs = deque(maxlen=20)
+
     while True:
-        with getPostgresConnection() as conn:
-            print(".", end="", flush=True)
-            with conn.cursor() as cursor:
-                cursor.execute("select uid, deveui, msg from msgs where uid < %s and dup = 'f' order by uid limit %s offset %s", (maxUid + 1, batchSize, offset))
-                result = cursor.fetchall()
-                cursor.close()
+        with conn.cursor() as cursor:
+            print("#", end="", flush=True)
+            i = 0
+            for (uid, msg) in getNextBatch(cursor, deveui, offset):
+                i += 1
+                if msg not in recentMsgs:
+                    recentMsgs.append(msg)
+                    continue
 
-                lastBatchSize = len(result)
-                offset = offset + lastBatchSize
+                dupCount = dupCount + 1
 
-                for row in result:
-                    uid = row[0]
-                    deveui = row[1]
-                    msg = row[2]
+                with conn.cursor() as updateCursor:
+                    updateCursor.execute("update msgs set (ignore, reason) = (%s, 'Duplicate in RawData') where uid = %s", (True, uid))
 
-                    if not deveui in lastMsg:
-                        lastMsg[deveui] = { "uid": uid, "msg": msg }
-                        continue
+            conn.commit()
 
-                    lastMsg[deveui]["uid"] = uid
-                    lastMsg[deveui]["msg"] = msg
-
-        if lastBatchSize < batchSize:
-            break
+            offset += i
+            if i < batchSize:
+                break
 
     print("")
-
-
-def findDupes(minUid):
-    dupCount = 0
-
-    with psycopg2.connect(host=postgresCfg["host"], port=postgresCfg["port"], user=postgresCfg["user"], password=postgresCfg["password"], dbname=postgresCfg["database"]) as conn:
-        while True:
-            with conn.cursor() as cursor:
-                print("#", end="", flush=True)
-
-                result = getNextBatch(cursor)
-                offset = offset + len(result)
-                for row in result:
-                    uid = row[0]
-                    deveui = row[1]
-                    msg = row[2]
-
-                    if not deveui in lastMsg:
-                        lastMsg[deveui] = { "uid": uid, "msg": msg}
-                        continue
-
-                    isDup = False
-                    x = lastMsg[deveui]
-                    if x["msg"] == msg:
-                        dupCount = dupCount + 1
-                        isDup = True
-                    else:
-                        lastMsg[deveui] = { "uid": uid, "msg": msg}
-
-                    with conn.cursor() as updateCursor:
-                        updateCursor.execute("update msgs set dup = %s where uid = %s", (isDup, uid))
-
-                    lastMsg[deveui] = { "uid": uid, "msg": msg}
-
-
-                conn.commit()
-
-                if len(result) < batchSize:
-                    break
-
     print(f"Found {dupCount} duplicates.")
 
 
-populateMsgDict(2050543)
+with getPostgresConnection() as conn:
+    with conn.cursor() as devQry:
+        devQry.execute("select distinct(deveui) from msgs")
+        for (deveui, ) in devQry.fetchall():
+            print(deveui)
+            findDupes(conn, deveui)

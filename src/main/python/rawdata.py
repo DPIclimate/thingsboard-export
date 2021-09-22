@@ -1,3 +1,4 @@
+from io import StringIO
 import json
 import mysql.connector
 import os
@@ -11,6 +12,9 @@ from mysql.connector import connect
 config = {}
 with open("config.json", "r") as configFile:
     config = json.load(configFile)
+
+mysqlConfig = config["mysql"]
+pgConfig = config["postgres"]
 
 def getTimeStamp(ts : str) -> str:
     # Truncate timestamps with more than 6 fractional second digits
@@ -63,40 +67,50 @@ def v3Parser(msg : dict) -> dict:
 offset = 0
 batchSize = 10000
 
-pg = psycopg2.connect(f"host={config['postgres']['host']} dbname={config['postgres']['database']} user={config['postgres']['user']} password={config['postgres']['password']}")
-pgCursor = pg.cursor()
+with connect(host=mysqlConfig['host'], port=mysqlConfig['port'], user=mysqlConfig['user'], password=mysqlConfig['password'], database=mysqlConfig['database']) as connection:
+    with psycopg2.connect(f"host={pgConfig['host']} port={pgConfig['port']} dbname={pgConfig['database']} user={pgConfig['user']} password={pgConfig['password']}") as pg:
 
-with connect(host=config['mysql']['host'], user=config['mysql']['user'], password=config['mysql']['password'], database=config['mysql']['database']) as connection:
-    while True:
-        with connection.cursor() as cursor:
-            print("#", end="", flush=True)
+        while True:
+            with connection.cursor() as cursor:
+                print("#", end="", flush=True)
 
-            cursor.execute("select uid, payload from RawData order by uid limit %s, %s", (offset, batchSize))
-            result = cursor.fetchall()
-            offset = offset + len(result)
+                cursor.execute("select uid, payload from RawData order by uid limit %s, %s", (offset, batchSize))
 
-            for row in result:
-                uid = row[0]
-                ttnMsg = json.loads(row[1])
+                rowCount = 0
 
-                if "dev_id" in ttnMsg:
-                    msg = v2Parser(ttnMsg)
-                elif "end_device_ids" in ttnMsg:
-                    msg = v3Parser(ttnMsg)
-                else:
-                    print("\nCould not parse message: " + row[1])
-                    continue
+                values = StringIO()
 
-                ts = datetime.fromisoformat(msg["time"])
+                allRows = list(cursor.fetchall())
+                for row in allRows:
+                    rowCount += 1
+                    uid = row[0]
+                    ttnMsg = json.loads(row[1])
 
-                values = (uid, ts, msg["hwSerial"], json.dumps(msg), json.dumps(ttnMsg))
-                pgCursor.execute("INSERT INTO msgs (uid, ts, deveui, summary, msg) VALUES (%s, %s, %s, %s, %s)", values)
+                    if "dev_id" in ttnMsg:
+                        msg = v2Parser(ttnMsg)
+                    elif "end_device_ids" in ttnMsg:
+                        msg = v3Parser(ttnMsg)
+                    else:
+                        print("\nCould not parse message: " + row[1])
+                        continue
 
-            cursor.close()
-            pg.commit()
+                    ts = datetime.fromisoformat(msg["time"])
 
-            if len(result) < batchSize:
-                break
+                    line = "{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(uid, ts, msg["appId"], msg["devId"], msg["hwSerial"], msg["payload"], json.dumps(ttnMsg))
+                    values.writelines((line, ))
 
-pgCursor.close()
-pg.close()
+                values.seek(0)
+
+                with pg.cursor() as pgCursor:
+                    pgCursor.copy_from(values, 'msgs', columns=('uid', 'ts', 'appid', 'devid', 'deveui', 'payload', 'msg'))
+
+                values.close()
+
+                cursor.close()
+
+                pg.commit()
+
+                if rowCount < batchSize:
+                    break
+
+                offset += rowCount
