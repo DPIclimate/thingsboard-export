@@ -25,7 +25,7 @@ def getPostgresConnection():
 
 
 def getNextBatch(cursor, deveui, offset):
-    cursor.execute("select uid, msg from msgs where deveui = %s order by uid limit %s offset %s", (deveui, batchSize, offset))
+    cursor.execute("select uid, msg from msgs where deveui = %s AND (TO_DATE(msg->'metadata'->>'time', 'YYYY-MM-DDTHH:MI:SS') >= (NOW() - interval '7 days')) order by uid limit %s offset %s", (deveui, batchSize, offset))
     result = cursor.fetchall()
     return result
 
