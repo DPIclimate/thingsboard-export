@@ -21,7 +21,6 @@ previousDate = currentDate - timedelta(days=32)
 
 batchSize = 10000
 
-lastMsg = {}
 
 def getPostgresConnection():
     print("Connecting to database...")
@@ -29,7 +28,6 @@ def getPostgresConnection():
 
 
 def getNextBatch(cursor, deveui, uid):
-    print("Getting next batch")
     cursor.execute("select uid, msg from msgs where deveui = %s and uid >= %s order by uid limit %s", (deveui, uid, batchSize))
     result = cursor.fetchall()
     return result
@@ -37,7 +35,6 @@ def getNextBatch(cursor, deveui, uid):
 
 def findDupes(conn, deveui, minUid):
     dupCount = 0
-    offset = 0
 
     # The deque will only hold the n most recent messages. Adding a new unique
     # message will remove the oldest one from the other end of the queue.
@@ -48,8 +45,7 @@ def findDupes(conn, deveui, minUid):
             print("#", end="", flush=True)
             i = 0
             try:
-                for (uid, msg) in getNextBatch(cursor, deveui, minUid):
-                    i += 1
+                for i, (uid, msg) in enumerate(getNextBatch(cursor, deveui, minUid)):
                     minUid = uid
                     if msg not in recentMsgs:
                         recentMsgs.append(msg)
@@ -62,12 +58,11 @@ def findDupes(conn, deveui, minUid):
 
                 conn.commit()
 
-                offset += i
                 if i < batchSize:
                     break
             except Exception as e:
                 print(e)
-                sys.exit()
+                sys.exit(1)
 
     print("")
     print(f"Found {dupCount} duplicates.")
