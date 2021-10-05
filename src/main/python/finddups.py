@@ -5,7 +5,7 @@ import os.path
 import psycopg2
 
 from collections import deque
-from datetime import datetime, tzinfo, timezone
+from datetime import datetime, tzinfo, timezone, timedelta, date
 from dateutil.parser import parse
 from mysql.connector import connect
 
@@ -15,17 +15,22 @@ with open("config.json", "r") as configFile:
 
 postgresCfg = config["postgres"]
 
+# Define prevous month here
+currentDate = date(year=2021, month=10, day=1)
+previousDate = currentDate - timedelta(days=32) # Current date minus just over a month
+
 batchSize = 10000
 
 lastMsg = {}
 
 
 def getPostgresConnection():
+    print("Connecting to database...")
     return psycopg2.connect(host=postgresCfg["host"], port=postgresCfg["port"], user=postgresCfg["user"], password=postgresCfg["password"], dbname=postgresCfg["database"])
 
 
 def getNextBatch(cursor, deveui, offset):
-    cursor.execute("select uid, msg from msgs where deveui = %s AND (TO_DATE(msg->'metadata'->>'time', 'YYYY-MM-DDTHH:MI:SS') >= (NOW() - interval '7 days')) order by uid limit %s offset %s", (deveui, batchSize, offset))
+    cursor.execute("select uid, msg from msgs where deveui = %s and ((coalesce(msg->'metadata'->>'time', msg->'uplink_message'->>'recieved_at'))::timestamptz >= %s) order by uid limit %s offset %s", (deveui, previousDate, batchSize, offset))
     result = cursor.fetchall()
     return result
 
@@ -65,6 +70,11 @@ def findDupes(conn, deveui):
 with getPostgresConnection() as conn:
     with conn.cursor() as devQry:
         devQry.execute("select distinct(deveui) from msgs")
+        nDups = 0
         for (deveui, ) in devQry.fetchall():
             print(deveui)
-            findDupes(conn, deveui)
+            devDups = findDupes(conn, deveui)
+            nDups += devDups
+        print(f"A total of {nDups} were found.")
+
+
