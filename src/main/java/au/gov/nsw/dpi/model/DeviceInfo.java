@@ -6,27 +6,16 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class DeviceInfo extends ModelBaseObject {
-    private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss XX");
 
     public String tbDevName = "";
     public String tbDevId = "";
-    //private long created = 0;
     private long from = 0;
     private long to = 0;
-    //public String createdReadable = "";
     public String fromReadable = "";
     public String toReadable = "";
     public String readingsPrefix = "";
     public Map<String, String> fieldToFilename = new HashMap<>();
-
-//    public long getCreated() {
-//        return created;
-//    }
-//
-//    public void setCreated(final long created) {
-//        this.created = created;
-//        createdReadable = sdf.format(new Date(created));
-//    }
 
     public long getFrom() {
         return from;

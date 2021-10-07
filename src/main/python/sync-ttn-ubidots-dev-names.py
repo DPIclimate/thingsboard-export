@@ -68,7 +68,9 @@ ttnDevs = ttnGetDevicesForApp(ttnAppId)
 for d in ttnDevs:
     eui = d["ids"]["dev_eui"].lower()
     ttnDevId = d["ids"]["device_id"]
-    ttnDevName = d["name"]
+    ttnDevName = None
+    if "name" in d:
+        ttnDevName = d["name"]
 
     print(f"Found device {ttnDevId} / {ttnDevName}")
     try:
@@ -79,7 +81,9 @@ for d in ttnDevs:
 
         u = {}
         u["name"] = ttnDevId
-        u["description"] = ttnDevName
+        if ttnDevName is not None:
+            u["description"] = ttnDevName
+
         u["context"] = { "source": "ttn", "appId": ttnAppId, "devId": ttnDevId}
         print(json.dumps(u))
         print("=============")

@@ -50,9 +50,10 @@ public class CLI implements Callable<Integer> {
     private static final Logger logger = LoggerFactory.getLogger(CLI.class);
 
     private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private static final SimpleDateFormat csvHrFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss XX");
 
     // ThingsBoard REST client library.
-    private static RestClient rc;
+    private static RestClient rc = null;
 
     // 1970 epoch representation of the first and last times we want messages from, in milliseconds.
     // These will be zero if not set using --to and --from.
@@ -86,12 +87,23 @@ public class CLI implements Callable<Integer> {
      * @return the new DeviceInfo object.
      */
     private DeviceInfo createDeviceInfo(final Device device) {
+        return createDeviceInfo(device.getName(), device.getId().getId().toString());
+    }
+
+    /**
+     * Create a minimal DeviceInfo object from the given Device.
+     *
+     * @param tbDevName the name of the device.
+     * @param tbDevId the ThingsBoard id of the device.
+     * @return the new DeviceInfo object.
+     */
+    private DeviceInfo createDeviceInfo(final String tbDevName, final String tbDevId) {
         final DeviceInfo devInfo = new DeviceInfo();
-        devInfo.tbDevName = device.getName();
-        devInfo.tbDevId = device.getId().getId().toString();
+        devInfo.tbDevName = tbDevName;
+        devInfo.tbDevId = tbDevId;
 
         // Trim is early on to remove leading/trailing whitespace from our device names.
-        devInfo.readingsPrefix = sanitiseString(device.getName().trim());
+        devInfo.readingsPrefix = sanitiseString(tbDevName.trim());
         return devInfo;
     }
 
@@ -410,7 +422,7 @@ public class CLI implements Callable<Integer> {
                 if ( ! value.trim().isEmpty()) {
                     String ts;
                     if (humanReadableDates) {
-                        ts = sdf.format(tskv.getTs());
+                        ts = csvHrFormat.format(tskv.getTs());
                     } else {
                         ts = Long.toString(tskv.getTs());
                     }
@@ -433,21 +445,18 @@ public class CLI implements Callable<Integer> {
      * @param device
      * @throws Exception
      */
-    private void migrateDevice(final Device device) throws Exception {
-        logger.info("Migrating device {}", device.getName());
+    private void migrateDevice(final String deviceName) throws Exception {
+        logger.info("Migrating device {}", deviceName);
 
         // Create enough of a DeviceInfo object to get the directory where the json file can be read.
-        DeviceInfo devInfo = createDeviceInfo(device);
+        DeviceInfo devInfo = createDeviceInfo(deviceName, "ignored");
         final Path outputName = getDeviceDirectory(devInfo).resolve(devInfo.readingsPrefix + ".json");
+
+        // Read in the device info json to get the CSV filenames.
         final Gson gson = new Gson();
         try (FileReader fr = new FileReader(outputName.toFile())) {
             devInfo = gson.fromJson(fr, DeviceInfo.class);
         }
-
-        // TODO: Add a deveui field to the device info object that can be manually added
-        // after the export is done. Then prefer that field over the TB device name when
-        // comparing to Ubidots datasources because when they are created by the ubifunction
-        // it uses the deveui as the datasource (or device) name.
 
         final Map<String, String> ubidotsConfig = (Map<String, String>)config.get("ubidots");
         final String ubiApiKey = ubidotsConfig.get("apikey");
@@ -470,9 +479,13 @@ public class CLI implements Callable<Integer> {
         }
 
         if ( ! devExists) {
-            logger.info("Creating device {} in Ubidots", devInfo.tbDevName.trim());
-            dataSource = u.createDataSource(devInfo.tbDevName.trim());
-            Thread.sleep(1100);
+            if (readOnly) {
+                logger.info("[read-only, no-op] Creating device {} in Ubidots", devInfo.tbDevName.trim());
+            } else {
+                logger.info("Creating device {} in Ubidots", devInfo.tbDevName.trim());
+                dataSource = u.createDataSource(devInfo.tbDevName.trim());
+                Thread.sleep(1100);
+            }
         }
 
         final Variable[] existingVars = dataSource.getVariables();
@@ -483,20 +496,25 @@ public class CLI implements Callable<Integer> {
         }
 
         final ExecutorService es = Executors.newFixedThreadPool(devInfo.fieldToFilename.size());
-        for (final var tsKey : devInfo.fieldToFilename.keySet()) {
+        for (final var varName : devInfo.fieldToFilename.keySet()) {
             Variable v = null;
-            if (variables.containsKey(tsKey)) {
-                logger.info("Variable {} already exists.", tsKey);
-                v = variables.get(tsKey);
+            if (variables.containsKey(varName)) {
+                logger.info("Variable {} already exists.", varName);
+                v = variables.get(varName);
             } else {
-                logger.info("Creating variable {}.", tsKey);
-                v = dataSource.createVariable(tsKey);
-                Thread.sleep(1100);
+                if (readOnly) {
+                    logger.info("[read-only, no-op] Creating variable {}.", varName);
+                } else {
+                    logger.info("Creating variable {}.", varName);
+                    v = dataSource.createVariable(varName);
+                    Thread.sleep(1100);
+                }
             }
 
             final DataSource fds = dataSource;
             final Variable fv = v;
-            final Path csv = getDeviceDirectory(devInfo).resolve(devInfo.fieldToFilename.get(tsKey));
+            final Path csv = getDeviceDirectory(devInfo).resolve(devInfo.fieldToFilename.get(varName));
+            logger.info("Loading values for variable {} from {}", varName, csv.toString());
 
             es.submit(new Callable<Boolean>() {
                 @Override
@@ -505,24 +523,34 @@ public class CLI implements Callable<Integer> {
                         // Create and use a new ApiClient object so each thread gets its own API token
                         // rather than sharing one. This allows each thread to make 4 calls per second
                         // instead of all threads being limited to 4 calls a second in total.
-                        //final ApiClient apiClient = new ApiClient("BBFF-f7dd7a2b7c89889ad04aa67e18048d969e6");
                         final ApiClient apiClient = new ApiClient(ubiApiKey);
-                        final DataSource xds = apiClient.getDataSource(fds.getId());
-                        final Variable[] xvs = xds.getVariables();
-                        Variable xv = null;
-                        for (final var z : xvs) {
+
+                        // Now the DataSource and Variable have to be fetched from the new ApiClient
+                        // instance. The Variables found above cannot be used with this thread-local
+                        // ApiClient instance.
+                        final DataSource threadDataSource = apiClient.getDataSource(fds.getId());
+                        final Variable[] threadVars = threadDataSource.getVariables();
+                        Variable threadVariable = null;
+                        for (final var z : threadVars) {
                             if (z.getName().equals(fv.getName())) {
-                                xv = z;
+                                threadVariable = z;
                                 break;
                             }
                         }
 
-                        if (Files.isReadable(csv) && Files.isRegularFile(csv)) {
+                        if (threadVariable != null && Files.isReadable(csv) && Files.isRegularFile(csv)) {
                             final var lines = Files.readAllLines(csv);
-                            int i = 0;
                             final int lineCount = lines.size();
                             int linesLeft = lineCount;
 
+                            if (readOnly) {
+                                logger.info("[read-only, no-op] Read csv for variable {}", varName);
+                                return true;
+                            }
+
+                            // i is the index into the lines from the csv file. It is incremented
+                            // in the inner loop that adds the values to the array that is sent to ubidots.
+                            int i = 0;
                             while (i < lineCount) {
                                 // 200 values at a time to keep under the 10kb limit
                                 // ubidots has for the http post body.
@@ -534,6 +562,8 @@ public class CLI implements Callable<Integer> {
                                 final var values = new double[limit];
                                 final var timestamps = new long[limit];
 
+                                // This inner loop prepares a chunk of timestamps and values to
+                                // send in a single request.
                                 for (int j = 0; j < limit; j++) {
                                     final var line = lines.get(i);
                                     final var cols = line.split(",");
@@ -542,17 +572,21 @@ public class CLI implements Callable<Integer> {
                                     i++;
                                 }
 
+                                // p & q are only used to calculate a percentage complete figure
+                                // for display to the user.
                                 final int q = lineCount - linesLeft + limit;
                                 final int p = (int)((float)q / (float)lineCount * 100.0f);
-                                logger.info("Saving {} values for key {}. {}%", limit, tsKey, p);
-                                xv.saveValues(values, timestamps);
+
+                                logger.info("Saving {} values for key {}. {}%", limit, varName, p);
+                                threadVariable.saveValues(values, timestamps);
                                 Thread.sleep(300);
 
                                 linesLeft -= limit;
                             }
+
                             return true;
                         } else {
-                            logger.warn("Could not read CSV file for key {}.", tsKey);
+                            logger.warn("Could not read CSV file for key {}.", varName);
                         }
                     } catch (final Exception e) {
                         e.printStackTrace();
@@ -569,7 +603,7 @@ public class CLI implements Callable<Integer> {
         }
     }
 
-    @Option(names = { "-n", "--devname" }, description = "the ThingsBoard name for the device, may be a comma separated list of device names")
+    @Option(names = { "-n", "--devname" }, description = "the ThingsBoard name for the device, may be given multiple times")
     private String[] deviceNamesArray;
 
     @Option(names = { "--devnamefile" }, description = "read devices names from the given file with one device name per line")
@@ -614,6 +648,9 @@ public class CLI implements Callable<Integer> {
     @Option(names = { "-m" }, description = "migrate timeseries to Ubidots using exported data for the named device")
     private boolean migrateDevice;
 
+    @Option(names = { "-r" }, description = "read-only - when -m is used, only check if devices and variables exist and CSV files can be read")
+    private boolean readOnly;
+
     // This gets populated from either deviceNamesArray or deviceNamesFile.
     private final List<String> deviceNamesList = new ArrayList<>();
 
@@ -654,6 +691,11 @@ public class CLI implements Callable<Integer> {
             }
         }
 
+        if (StringUtils.isEmpty(user) || StringUtils.isEmpty(password) || StringUtils.isEmpty(host)) {
+            CommandLine.usage(this, System.err);
+            return -1;
+        }
+
         //
         // A few kludges here.
         //
@@ -689,8 +731,10 @@ public class CLI implements Callable<Integer> {
             }
         }
 
-        rc = new RestClient("https://" + host);
-        rc.login(user, password);
+        if ( ! migrateDevice) {
+            rc = new RestClient("https://" + host);
+            rc.login(user, password);
+        }
 
         try {
             if (deviceNamesFile != null) {
@@ -717,14 +761,15 @@ public class CLI implements Callable<Integer> {
 
             for (final String n : deviceNamesList) {
                 try {
+                    if (migrateDevice) {
+                        migrateDevice(n);
+                        continue;
+                    }
+
                     final Optional<Device> dev = rc.findDevice(n);
                     dev.ifPresent(d -> {
                         try {
-                            if (migrateDevice) {
-                                migrateDevice(d);
-                            } else {
-                                exportDevice(d);
-                            }
+                            exportDevice(d);
                         } catch (final Exception e) {
                             e.printStackTrace();
                         }
@@ -734,7 +779,9 @@ public class CLI implements Callable<Integer> {
                 }
             };
 
-            rc.logout();
+            if (rc != null) {
+                rc.logout();
+            }
 
         } catch (final Exception e) {
             e.printStackTrace();
