@@ -1,5 +1,6 @@
 target/
 *.DS_Store
 *.swp
-/.apt_generated/
-/.apt_generated_tests/
+.apt_generated/
+.apt_generated_tests/
+*.csv
