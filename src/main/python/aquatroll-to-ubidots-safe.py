@@ -5,15 +5,15 @@ import csv
 import json
 
 
-USER_NAME = "PierceMatt"
-DWN_KEY = "83S2-GZYD-TW82"
-UBIDOTS_TOKEN="BBAU-89jVfECLkxlQasPB7qBU71Z5y6L5uZ"
+USER_NAME = "username"
+DWN_KEY = "mace_key"
+UBIDOTS_TOKEN="ubidots_token"
 
 
 def get_latest_telemetry():
     # Get start and end date
     endDate = datetime.now()
-    startDate = endDate - timedelta(hours=2)
+    startDate = endDate - timedelta(hours=3)
 
     # Format dates for request
     endDate = endDate.strftime("%Y-%m-%d%%20%H:%M:%S")
@@ -50,12 +50,15 @@ def get_ubidots_latest():
     return lastTimestamp
 
 
-def csv_to_json(csvFile, lastTimestamp):
+def csv_to_json(csvFile):
+    lastTimestamp = get_ubidots_latest()
+
     # Looks at the parsed csv file and converts each value to a basic json object to sent to ubidots
     ubidotsDevIds = ["615d2a918c58282149135629", "615d2a98f4c81a0491300839", "615d2a9df4c81a049130083a", "615d2aad8c58282184a573dc", 
                     "615d2ab98c58282022c5ffdb", "615d2ac083763f5ce0ebec40", "615d2b068c58282184a573dd", "615d2b1483763f5d1abb6d37", 
                     "615d2b1cf4c81a049130083b", "615d2b228c58282184a573de", "615d2b2883763f5ce0ebec41", "615d2b3783763f5d1abb6d38", 
                     "615d2b448c5828214913562a", "615d2b4f8c5828210eaa36a6", "615d2b56f4c81a045728b872"]
+
     with open(csvFile, encoding="utf-8") as csvf:
         csvReader = csv.DictReader(csvf)
         for row in csvReader:
@@ -73,8 +76,10 @@ def csv_to_json(csvFile, lastTimestamp):
                 print("Value already in ubidots.")
 
 
-if __name__ == '__main__':
+def main():
     get_latest_telemetry()
-    lastTimestamp = get_ubidots_latest()
-    csv_to_json("parsed_data.csv", lastTimestamp)
+    csv_to_json("parsed_data.csv")
 
+
+if __name__ == '__main__':
+    main()
