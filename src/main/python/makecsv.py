@@ -7,9 +7,15 @@ def main():
     payloadsJson = sys.argv[1]
     s = os.path.splitext(os.path.basename(payloadsJson))
     devName = s[0]
-    os.makedirs(devName, exist_ok=True)
 
-    devInfo = {"tbDevName": devName, "tbDevId": "y", "devEui": "z", "readingsPrefix": devName, "fieldToFilename": {} }
+    # Need this because the Java tool replaces - with _ . I think I did this because
+    # ttnv3 devices cannot have - in their ids. But the tool doesn't create ttn devices
+    # so I'm not sure why I felt it was necessary.
+    underscoredDevName = devName.replace("-", "_")
+
+    os.makedirs(underscoredDevName, exist_ok=True)
+
+    devInfo = {"tbDevName": devName, "tbDevId": "ignored", "devEui": "ignored", "readingsPrefix": underscoredDevName, "fieldToFilename": {} }
 
     # Load the file written by the payload decoder. This must be a JSON file of the form
     # [
@@ -37,14 +43,14 @@ def main():
         if a == "ts":
             continue
 
-        fname = f"{devName}/{devName}_{a}.csv"
+        fname = f"{underscoredDevName}/{underscoredDevName}_{a}.csv"
         print(fname)
         frame.to_csv(fname, columns=["ts", a], header=False, index=False)
 
         devInfo["fieldToFilename"][a] = os.path.basename(fname)
 
     # Write the device summary JSON file.
-    fname = f"{devName}/{devName}.json"
+    fname = f"{underscoredDevName}/{underscoredDevName}.json"
     with open(fname, "w") as jsonFile:
         json.dump(devInfo, jsonFile, indent=2)
 
