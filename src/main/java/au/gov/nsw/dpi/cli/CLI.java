@@ -32,6 +32,7 @@ import org.thingsboard.server.common.data.kv.TsKvEntry;
 import org.thingsboard.server.common.data.page.TimePageLink;
 
 import com.google.gson.Gson;
+import com.google.gson.stream.JsonReader;
 import com.ubidots.ApiClient;
 import com.ubidots.DataSource;
 import com.ubidots.Variable;
@@ -438,12 +439,12 @@ public class CLI implements Callable<Integer> {
     }
 
     /**
-     * Push timeseries data to ubidots from an exported device.
+     * Push timeseries data to ubidots from an exported device. This method expects the data
+     * to be in the same format as export writes with a device summary JSON file and a
+     * set of CSV files for the variables.
      *
-     *  <p>The device info and timeseries filenames are read from a device info json file.</p>
-     *
-     * @param device
-     * @throws Exception
+     * @param device the name of the device. This is used to find the JSON and CSV files.
+     * @throws Exception if there is an error.
      */
     private void migrateDevice(final String deviceName) throws Exception {
         logger.info("Migrating device {}", deviceName);
@@ -603,6 +604,189 @@ public class CLI implements Callable<Integer> {
         }
     }
 
+    /**
+     * Push timeseries data to ubidots from an exported device. This method expects the data
+     * to be in the format written by the TTN v3 payload formatter driver program.
+     *
+     * @param device the name of the device. This is used to find the JSON and CSV files.
+     * @param valuesFile the JSON file to read the values from.
+     * @throws Exception if there is an error.
+     */
+    private void migrateDevice(final String deviceName, final Path valuesFile) throws Exception {
+        logger.info("Migrating device {}", deviceName);
+
+        logger.info("Reading file {}", valuesFile.toString());
+
+        final List<Long> timestampsList = new ArrayList<>();
+        final Map<String, List<Double>> kvPairs = new HashMap<>();
+
+        try (final JsonReader reader = new JsonReader(new FileReader(valuesFile.toString()))) {
+            reader.beginArray();
+            while (reader.hasNext()) {
+                reader.beginObject();
+                while (reader.hasNext()) {
+                    final String key = reader.nextName();
+
+                    if ("ts".equals(key)) {
+                        final long ts = reader.nextLong();
+                        timestampsList.add(ts);
+                    } else {
+                        final double value = reader.nextDouble();
+                        List<Double> values = kvPairs.get(key);
+                        if (values == null) {
+                            values = new ArrayList<Double>();
+                            kvPairs.put(key, values);
+                        }
+                        values.add(value);
+                    }
+                }
+                reader.endObject();
+            }
+            reader.endArray();
+        }
+
+        logger.info("Read {} entries from file", timestampsList.size());
+
+        final Map<String, String> ubidotsConfig = (Map<String, String>)config.get("ubidots");
+        final String ubiApiKey = ubidotsConfig.get("apikey");
+        final ApiClient u = new ApiClient(ubiApiKey);
+        final DataSource[] existingDataSources = u.getDataSources();
+
+        // The calls to Thread.sleep are to keep the rate of API calls to below
+        // the ubidots-imposed limit of 4/second.
+
+        Thread.sleep(1100);
+        boolean devExists = false;
+        DataSource dataSource = null;
+        for (final var ds : existingDataSources) {
+            if (deviceName.equalsIgnoreCase(ds.getName())) {
+                logger.info("Device {} already exists in Ubidots", ds.getName());
+                dataSource = ds;
+                devExists = true;
+                break;
+            }
+        }
+
+        if ( ! devExists) {
+            if (readOnly) {
+                logger.info("[read-only, no-op] Creating device {} in Ubidots", deviceName);
+            } else {
+                logger.info("Creating device {} in Ubidots", deviceName);
+                dataSource = u.createDataSource(deviceName);
+                Thread.sleep(1100);
+            }
+        }
+
+        final Variable[] existingVars = dataSource.getVariables();
+        Thread.sleep(1100);
+        final Map<String, Variable> variables = new HashMap<>();
+        for (final var v : existingVars) {
+            variables.put(v.getName(), v);
+        }
+
+        final ExecutorService es = Executors.newFixedThreadPool(kvPairs.size());
+
+        for (final var varName : kvPairs.keySet()) {
+            Variable v = null;
+            if (variables.containsKey(varName)) {
+                logger.info("Variable {} already exists.", varName);
+                v = variables.get(varName);
+            } else {
+                if (readOnly) {
+                    logger.info("[read-only, no-op] Creating variable {}.", varName);
+                } else {
+                    logger.info("Creating variable {}.", varName);
+                    v = dataSource.createVariable(varName);
+                    Thread.sleep(1100);
+                }
+            }
+
+            // Make final copies of the mutable dataSource and v(ariable) objects
+            // so the threaded code can read them.
+            final DataSource fds = dataSource;
+            final Variable fv = v;
+
+            es.submit(new Callable<Boolean>() {
+                @Override
+                public Boolean call() {
+                    try {
+                        // Create and use a new ApiClient object so each thread gets its own API token
+                        // rather than sharing one. This allows each thread to make 4 calls per second
+                        // instead of all threads being limited to 4 calls a second in total.
+                        final ApiClient apiClient = new ApiClient(ubiApiKey);
+
+                        // Now the DataSource and Variable have to be fetched from the new ApiClient
+                        // instance. The Variables found above cannot be used with this thread-local
+                        // ApiClient instance.
+                        final DataSource threadDataSource = apiClient.getDataSource(fds.getId());
+                        final Variable[] threadVars = threadDataSource.getVariables();
+                        Variable threadVariable = null;
+                        for (final var z : threadVars) {
+                            if (z.getName().equals(fv.getName())) {
+                                threadVariable = z;
+                                break;
+                            }
+                        }
+
+                        final int lineCount = timestampsList.size();
+                        int linesLeft = lineCount;
+                        final List<Double> valuesList = kvPairs.get(fv.getName());
+
+                        if (readOnly) {
+                            logger.info("[read-only, no-op] Reading List for variable {}, {} entries", varName, valuesList.size());
+                            return true;
+                        }
+
+                        // i is the index into the Lists built from the JSON file. It is incremented
+                        // in the inner loop that adds the values to the array that is sent to ubidots.
+                        int i = 0;
+                        while (i < lineCount) {
+                            // 200 values at a time to keep under the 10kb limit
+                            // ubidots has for the http post body.
+                            int limit = 200;
+                            if (linesLeft < limit) {
+                                limit = linesLeft;
+                            }
+
+                            final var values = new double[limit];
+                            final var timestamps = new long[limit];
+
+                            // This inner loop prepares a chunk of timestamps and values to
+                            // send in a single request.
+                            for (int j = 0; j < limit; j++) {
+                                timestamps[j] = timestampsList.get(i);
+                                values[j] = valuesList.get(i);
+                                i++;
+                            }
+
+                            // p & q are only used to calculate a percentage complete figure
+                            // for display to the user.
+                            final int q = lineCount - linesLeft + limit;
+                            final int p = (int)((float)q / (float)lineCount * 100.0f);
+
+                            logger.info("Saving {} values for key {}. {}%", limit, varName, p);
+                            threadVariable.saveValues(values, timestamps);
+                            Thread.sleep(300);
+
+                            linesLeft -= limit;
+                        }
+
+                        return true;
+                    } catch (final Exception e) {
+                        e.printStackTrace();
+                    }
+
+                    return false;
+                }
+            });
+        }
+
+        es.shutdown();
+        while ( ! es.isTerminated()) {
+            es.awaitTermination(1, TimeUnit.MINUTES);
+        }
+    }
+
     @Option(names = { "-n", "--devname" }, description = "the ThingsBoard name for the device, may be given multiple times")
     private String[] deviceNamesArray;
 
@@ -624,7 +808,7 @@ public class CLI implements Callable<Integer> {
     @Option(names = { "-i", "--info" }, description = "only write the info file for each named device")
     private boolean infoOnly;
 
-    @Option(names = { "-j", "--json" }, description = "write the timeseries data in a format suitable for use with ThingsBoard saveEntityTelemetry REST call")
+    @Option(names = { "-j", "--json" }, description = "write the timeseries data in a format suitable for use with ThingsBoard saveEntityTelemetry REST call, or read Ubidots values from a JSON file")
     private boolean jsonTs;
 
     @Option(names = { "-hr", "--human-readable" }, description = "write dates in human-readable format")
@@ -647,6 +831,9 @@ public class CLI implements Callable<Integer> {
 
     @Option(names = { "-m" }, description = "migrate timeseries to Ubidots using exported data for the named device")
     private boolean migrateDevice;
+
+    @Option(names = { "--values" }, description = "path to the JSON values file")
+    private Path valuesFile;
 
     @Option(names = { "-r" }, description = "read-only - when -m is used, only check if devices and variables exist and CSV files can be read")
     private boolean readOnly;
@@ -692,8 +879,10 @@ public class CLI implements Callable<Integer> {
         }
 
         if (StringUtils.isEmpty(user) || StringUtils.isEmpty(password) || StringUtils.isEmpty(host)) {
-            CommandLine.usage(this, System.err);
-            return -1;
+            if ( ! migrateDevice) {
+                CommandLine.usage(this, System.err);
+                return -1;
+            }
         }
 
         //
@@ -762,7 +951,13 @@ public class CLI implements Callable<Integer> {
             for (final String n : deviceNamesList) {
                 try {
                     if (migrateDevice) {
-                        migrateDevice(n);
+                        if (jsonTs) {
+                            migrateDevice(n.trim(), valuesFile);
+                        } else {
+                            // Read from the device info JSON, CSV timeseries files.
+                            // Don't trim this name?
+                            migrateDevice(n);
+                        }
                         continue;
                     }
 
