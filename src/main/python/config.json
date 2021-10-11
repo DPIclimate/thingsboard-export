@@ -1,25 +1,26 @@
 {
     "bindir": "/usr/local/bin",
     "mysql": {
-        "host": "sherman-pablo.bnr.la",
-        "port": "15382",
-        "user": "broker",
-        "password": "front_elevate_dragonfly",
+        "host": "localhost",
+        "port": "3306",
+        "user": "...",
+        "password": "...",
         "database": "broker"
     },
     "postgres": {
-        "host": "sherman-pablo.bnr.la",
-        "port": "28157",
+        "host": "localhost",
+        "port": "5432",
         "user": "postgres",
-        "password": "fence_piston_amethyst",
+        "password": "...",
         "database": "broker"
     },
     "thingsboard": {
-        "user": "david.a.taylor@dpi.nsw.gov.au",
-        "password": "zzz"
+        "host": "...",
+        "port": "",
+        "user": "...",
+        "password": "..."
     },
     "ubidots": {
-        "apikey": "BBAU-43e381112a63f10e45b1cd13378259f2883",
-        "token": "BBAU-VOMMw42nHGcLPKVfBMQxYXDUiL78ln"
+        "apikey": "BBAU-..."
     }
 }
