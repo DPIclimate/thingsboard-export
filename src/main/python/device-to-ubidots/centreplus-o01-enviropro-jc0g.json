@@ -1,0 +1,17 @@
+[
+{"ts":1585523776628,"rtc":"20","solmv":"3312","command":"0","moisture1":"0.6","moisture2":"0","moisture3":"0","moisture4":"0","moisture5":"0","moisture6":"0","moisture7":"0","moisture8":"0"},
+{"ts":1585523785647,"rtc":"29","solmv":"2320","command":"1","temperature1":"18.82","temperature2":"18.55","temperature3":"18.27","temperature4":"18.47","temperature5":"19.52","temperature6":"19.39","temperature7":"19.01","temperature8":"18.92"},
+{"ts":1591589685574,"rtc":"35","solmv":"28438","command":"0","moisture1":"0.59","moisture2":"0","moisture3":"0.13","moisture4":"0.14","moisture5":"0.19","moisture6":"0.27","moisture7":"0.46","moisture8":"0.62"},
+{"ts":1591594205460,"rtc":"4555","solmv":"27963","command":"0","moisture1":"11.97","moisture2":"19.13","moisture3":"21.81","moisture4":"34.02","moisture5":"32.45","moisture6":"38.09","moisture7":"46.96","moisture8":"55.32"},
+{"ts":1591594214382,"rtc":"4564","solmv":"27955","command":"1","temperature1":"14.35","temperature2":"14.21","temperature3":"14.68","temperature4":"15.32","temperature5":"16.67","temperature6":"16.44","temperature7":"15.98","temperature8":"15.78"},
+{"ts":1591595096852,"rtc":"5447","solmv":"25545","command":"0","moisture1":"12.09","moisture2":"19.1","moisture3":"21.83","moisture4":"34.13","moisture5":"32.33","moisture6":"38.09","moisture7":"46.9","moisture8":"55.52"},
+{"ts":1591595106019,"rtc":"5456","solmv":"25545","command":"1","temperature1":"13.38","temperature2":"12.31","temperature3":"12.24","temperature4":"12.69","temperature5":"14.43","temperature6":"14.64","temperature7":"14.41","temperature8":"14.43"},
+{"ts":1591596002048,"rtc":"6352","solmv":"11805","command":"0","moisture1":"12.04","moisture2":"19.08","moisture3":"21.73","moisture4":"34.19","moisture5":"32.22","moisture6":"38.04","moisture7":"46.91","moisture8":"55.56"},
+{"ts":1591596011012,"rtc":"6361","solmv":"11797","command":"1","temperature1":"12.8","temperature2":"11.39","temperature3":"11.06","temperature4":"11.62","temperature5":"13.49","temperature6":"13.83","temperature7":"13.78","temperature8":"13.96"},
+{"ts":1591596895850,"rtc":"7246","solmv":"11652","command":"0","moisture1":"12.04","moisture2":"19.02","moisture3":"21.78","moisture4":"34.16","moisture5":"32.2","moisture6":"38.04","moisture7":"46.95","moisture8":"55.7"},
+{"ts":1591596905095,"rtc":"7255","solmv":"11652","command":"1","temperature1":"12.35","temperature2":"11.01","temperature3":"10.52","temperature4":"11.15","temperature5":"13.06","temperature6":"13.48","temperature7":"13.51","temperature8":"13.74"},
+{"ts":1591597772933,"rtc":"8123","solmv":"11636","command":"0","moisture1":"12.05","moisture2":"19.06","moisture3":"21.76","moisture4":"34.19","moisture5":"32.23","moisture6":"38.06","moisture7":"46.95","moisture8":"55.78"},
+{"ts":1591597782017,"rtc":"8132","solmv":"11636","command":"1","temperature1":"11.95","temperature2":"10.78","temperature3":"10.25","temperature4":"10.91","temperature5":"12.86","temperature6":"13.35","temperature7":"13.38","temperature8":"13.69"},
+{"ts":1591598652875,"rtc":"9003","solmv":"11636","command":"0","moisture1":"12.01","moisture2":"19.08","moisture3":"21.84","moisture4":"34.22","moisture5":"32.27","moisture6":"38.15","moisture7":"47.08","moisture8":"55.79"},
+{"ts":1591598662166,"rtc":"9012","solmv":"11628","command":"1","temperature1":"11.63","temperature2":"10.7","temperature3":"10.11","temperature4":"10.79","temperature5":"12.69","temperature6":"13.24","temperature7":"13.32","temperature8":"13.62"}
+]
