@@ -1,26 +1,32 @@
 {
     "bindir": "/usr/local/bin",
-    "mysql": {
-        "host": "localhost",
-        "port": "3306",
+    "fdtBroker": {
+        "host": "...",
+        "port": "...",
         "user": "...",
         "password": "...",
-        "database": "broker"
+        "database": "..."
+    },
+    "mysql": {
+        "host": "...",
+        "port": "...",
+        "user": "...",
+        "password": "...",
+        "database": "..."
     },
     "postgres": {
-        "host": "localhost",
-        "port": "5432",
-        "user": "postgres",
+        "host": "...",
+        "port": "...",
+        "user": "...",
         "password": "...",
-        "database": "broker"
+        "database": "..."
     },
     "thingsboard": {
-        "host": "...",
-        "port": "",
         "user": "...",
         "password": "..."
     },
     "ubidots": {
-        "apikey": "BBAU-..."
+        "apikey": "...",
+        "token": "..."
     }
 }
