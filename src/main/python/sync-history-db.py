@@ -1,5 +1,7 @@
 import json
 import logging
+import time
+import os
 
 import mysql.connector
 
@@ -7,6 +9,8 @@ logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%Y/%m/%d %H:%M:%S
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
+
+os.chdir("/tmp")
 
 with open("config.json", "r") as configFile:
     config = json.load(configFile)
@@ -43,23 +47,27 @@ def get_last_rawdata_uid(connection, table_name) -> int:
 
 def process_batch(start_uid: int) -> dict:
     with fdt_connection.cursor(buffered=True) as fdt_cursor:
-        fdt_cursor.execute("select uid, payload, state from RawData where uid > %s order by uid limit 2000", (start_uid, ))
+        fdt_cursor.execute("select uid, payload, state from RawData where uid > %s order by uid limit 1500", (start_uid, ))
         row_list = fdt_cursor.fetchall()
         row_count = len(row_list)
         last_row = row_list[-1]
 
         with history_connection.cursor() as history_cursor:
-            history_cursor.executemany("insert into RawDataTest(uid, payload, state) values (%s, %s, %s)", row_list)
+            history_cursor.executemany("insert into RawData(uid, payload, state) values (%s, %s, %s)", row_list)
             history_connection.commit()
 
     return {"maxUid": last_row[0], "rowCount": row_count}
 
 
 def main():
-    #os.chdir("/tmp")
+    # Set this true because we only read from this connection and we don't want all the reads
+    # getting added to a big transaction over the lenth of the run. There will only usually
+    # be one read per run anyway but when trying to catch up on the initial runs there can
+    # be lots of them.
+    fdt_connection.autocommit = True
 
     broker_uid = get_last_rawdata_uid(fdt_connection, "RawData")
-    history_uid = get_last_rawdata_uid(history_connection, "RawDataTest")
+    history_uid = get_last_rawdata_uid(history_connection, "RawData")
 
     log.info(f"Broker max uid: {broker_uid}")
     log.info(f"History max uid: {history_uid}")
@@ -73,7 +81,7 @@ def main():
             log.info("Starting batch")
             curr_batch = process_batch(history_uid)
             log.info(f"Processed {curr_batch['rowCount']} rows, up to Uid: {curr_batch['maxUid']}")
-            history_uid = get_last_rawdata_uid(history_connection, "RawDataTest")
+            history_uid = get_last_rawdata_uid(history_connection, "RawData")
             log.info(f"Msgs left to Sync: {broker_uid - history_uid}")
 
 
