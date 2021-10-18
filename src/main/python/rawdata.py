@@ -32,19 +32,7 @@ def v2Parser(msg : dict) -> dict:
     x["hwSerial"] = msg["hardware_serial"]
     x["port"] = msg["port"]
     x["payload"] = msg["payload_raw"]
-
-    # Cannot store a datetime object in the summary object because the json serialiser chokes on it.
-    # Found at least one message where the gateway time field was an empty string so catch the error
-    # and fall back to using the time the message was received by the TTN server which can be a
-    # couple of seconds later.
-    try:
-        x["time"] = parse(msg["metadata"]["gateways"][0]["time"]).isoformat(timespec="seconds")
-    except:
-        #print("Failed to parse time from gateways in message:")
-        #print(json.dumps(msg))
-        x["time"] = getTimeStamp(msg["metadata"]["time"])
-        #print(json.dumps(x, indent=2))
-        #exit(1)
+    x["time"] = getTimeStamp(msg["metadata"]["time"])
 
     return x
 
@@ -56,34 +44,50 @@ def v3Parser(msg : dict) -> dict:
     x["hwSerial"] = msg["end_device_ids"]["dev_eui"]
     if "f_port" in msg["uplink_message"]:
         x["port"] = msg["uplink_message"]["f_port"]
-    
+
     if "frm_payload" in msg["uplink_message"]:
         x["payload"] = msg["uplink_message"]["frm_payload"]
+    else:
+        x["payload"] = ""
 
-    # Cannot store a datetime object in the summary object because the json serialiser chokes on it.    
-    x["time"] = getTimeStamp(msg["received_at"])
+    x["time"] = getTimeStamp(msg["uplink_message"]["received_at"])
+
     return x
 
-offset = 0
 batchSize = 10000
 
-with connect(host=mysqlConfig['host'], port=mysqlConfig['port'], user=mysqlConfig['user'], password=mysqlConfig['password'], database=mysqlConfig['database']) as connection:
+with connect(host=mysqlConfig['host'], port=mysqlConfig['port'], user=mysqlConfig['user'], password=mysqlConfig['password'], database=mysqlConfig['database']) as raw_data:
+    raw_data.autocommit = True
+    raw_data_max_uid = 0
+    with raw_data.cursor() as rd_cursor:
+        rd_cursor.execute("select max(uid) from RawData")
+        rs = rd_cursor.fetchone()
+        raw_data_max_uid = rs[0]
+
+    print(f"RawData max uid: {raw_data_max_uid}")
+
     with psycopg2.connect(f"host={pgConfig['host']} port={pgConfig['port']} dbname={pgConfig['database']} user={pgConfig['user']} password={pgConfig['password']}") as pg:
+        msgs_max_uid = 0
+        with pg.cursor() as pg_cursor:
+            pg_cursor.execute("select max(uid) from msgs")
+            rs = pg_cursor.fetchone()
+            msgs_max_uid = rs[0]
+            pg.commit() # close the txn opened by the query
 
-        while True:
-            with connection.cursor() as cursor:
-                print("#", end="", flush=True)
+        print(f"msgs    max uid: {msgs_max_uid}")
 
-                cursor.execute("select uid, payload from RawData order by uid limit %s, %s", (offset, batchSize))
+        while msgs_max_uid < raw_data_max_uid:
+            with raw_data.cursor() as cursor:
+                print(f"Reading batch starting at uid greater than {msgs_max_uid}")
 
-                rowCount = 0
+                cursor.execute("select uid, payload from RawData where uid > %s order by uid limit %s", (msgs_max_uid, batchSize))
 
                 values = StringIO()
 
                 allRows = list(cursor.fetchall())
                 for row in allRows:
-                    rowCount += 1
                     uid = row[0]
+                    msgs_max_uid = uid
                     ttnMsg = json.loads(row[1])
 
                     if "dev_id" in ttnMsg:
@@ -109,8 +113,3 @@ with connect(host=mysqlConfig['host'], port=mysqlConfig['port'], user=mysqlConfi
                 cursor.close()
 
                 pg.commit()
-
-                if rowCount < batchSize:
-                    break
-
-                offset += rowCount
