@@ -5,6 +5,8 @@ import os
 
 import mysql.connector
 
+import rawdata
+
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%Y/%m/%d %H:%M:%S')
 
 log = logging.getLogger(__name__)
@@ -60,6 +62,9 @@ def process_batch(start_uid: int) -> dict:
 
 
 def main():
+    log.info("-----------------------------------------------------------------------------");
+    log.info("Starting copy from production to history")
+
     # Set this true because we only read from this connection and we don't want all the reads
     # getting added to a big transaction over the lenth of the run. There will only usually
     # be one read per run anyway but when trying to catch up on the initial runs there can
@@ -89,3 +94,5 @@ if __name__ == '__main__':
     main()
     fdt_connection.close()
     history_connection.close()
+    log.info("done")
+    rawdata.do_copy()
