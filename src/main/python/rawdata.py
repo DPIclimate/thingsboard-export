@@ -1,5 +1,6 @@
 from io import StringIO
 import json
+import logging
 import mysql.connector
 import os
 import os.path
@@ -9,12 +10,22 @@ from datetime import datetime, tzinfo, timezone
 from dateutil.parser import parse
 from mysql.connector import connect
 
+logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%Y/%m/%d %H:%M:%S')
+
+log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)
+
+os.chdir("/tmp")
+
+batchSize = 10000
+
 config = {}
 with open("config.json", "r") as configFile:
     config = json.load(configFile)
 
 mysqlConfig = config["mysql"]
 pgConfig = config["postgres"]
+
 
 def getTimeStamp(ts : str) -> str:
     # Truncate timestamps with more than 6 fractional second digits
@@ -23,6 +34,7 @@ def getTimeStamp(ts : str) -> str:
         ts = ts[:26] + "Z"
 
     return parse(ts).isoformat(timespec="seconds")
+
 
 def v2Parser(msg : dict) -> dict:
     x = {}
@@ -35,6 +47,7 @@ def v2Parser(msg : dict) -> dict:
     x["time"] = getTimeStamp(msg["metadata"]["time"])
 
     return x
+
 
 def v3Parser(msg : dict) -> dict:
     x = {}
@@ -54,62 +67,71 @@ def v3Parser(msg : dict) -> dict:
 
     return x
 
-batchSize = 10000
 
-with connect(host=mysqlConfig['host'], port=mysqlConfig['port'], user=mysqlConfig['user'], password=mysqlConfig['password'], database=mysqlConfig['database']) as raw_data:
-    raw_data.autocommit = True
-    raw_data_max_uid = 0
-    with raw_data.cursor() as rd_cursor:
-        rd_cursor.execute("select max(uid) from RawData")
-        rs = rd_cursor.fetchone()
-        raw_data_max_uid = rs[0]
+def do_copy():
+    log.info("-----------------------------------------------------------------------------");
+    log.info("Starting copy from mysql to postgres")
 
-    print(f"RawData max uid: {raw_data_max_uid}")
+    with connect(host=mysqlConfig['host'], port=mysqlConfig['port'], user=mysqlConfig['user'], password=mysqlConfig['password'], database=mysqlConfig['database']) as raw_data:
+        raw_data.autocommit = True
+        raw_data_max_uid = 0
+        with raw_data.cursor() as rd_cursor:
+            rd_cursor.execute("select max(uid) from RawData")
+            rs = rd_cursor.fetchone()
+            raw_data_max_uid = rs[0]
 
-    with psycopg2.connect(f"host={pgConfig['host']} port={pgConfig['port']} dbname={pgConfig['database']} user={pgConfig['user']} password={pgConfig['password']}") as pg:
-        msgs_max_uid = 0
-        with pg.cursor() as pg_cursor:
-            pg_cursor.execute("select max(uid) from msgs")
-            rs = pg_cursor.fetchone()
-            msgs_max_uid = rs[0]
-            pg.commit() # close the txn opened by the query
+        log.info(f"RawData max uid: {raw_data_max_uid}")
 
-        print(f"msgs    max uid: {msgs_max_uid}")
+        with psycopg2.connect(f"host={pgConfig['host']} port={pgConfig['port']} dbname={pgConfig['database']} user={pgConfig['user']} password={pgConfig['password']}") as pg:
+            msgs_max_uid = 0
+            with pg.cursor() as pg_cursor:
+                pg_cursor.execute("select max(uid) from msgs")
+                rs = pg_cursor.fetchone()
+                msgs_max_uid = rs[0]
+                pg.commit() # close the txn opened by the query
 
-        while msgs_max_uid < raw_data_max_uid:
-            with raw_data.cursor() as cursor:
-                print(f"Reading batch starting at uid greater than {msgs_max_uid}")
+            log.info(f"msgs    max uid: {msgs_max_uid}")
 
-                cursor.execute("select uid, payload from RawData where uid > %s order by uid limit %s", (msgs_max_uid, batchSize))
+            while msgs_max_uid < raw_data_max_uid:
+                with raw_data.cursor() as cursor:
+                    log.info(f"Reading batch starting at uid greater than {msgs_max_uid}")
 
-                values = StringIO()
+                    cursor.execute("select uid, payload from RawData where uid > %s order by uid limit %s", (msgs_max_uid, batchSize))
 
-                allRows = list(cursor.fetchall())
-                for row in allRows:
-                    uid = row[0]
-                    msgs_max_uid = uid
-                    ttnMsg = json.loads(row[1])
+                    values = StringIO()
 
-                    if "dev_id" in ttnMsg:
-                        msg = v2Parser(ttnMsg)
-                    elif "end_device_ids" in ttnMsg:
-                        msg = v3Parser(ttnMsg)
-                    else:
-                        print("\nCould not parse message: " + row[1])
-                        continue
+                    allRows = list(cursor.fetchall())
+                    for row in allRows:
+                        uid = row[0]
+                        msgs_max_uid = uid
+                        ttnMsg = json.loads(row[1])
 
-                    ts = datetime.fromisoformat(msg["time"])
+                        if "dev_id" in ttnMsg:
+                            msg = v2Parser(ttnMsg)
+                        elif "end_device_ids" in ttnMsg:
+                            msg = v3Parser(ttnMsg)
+                        else:
+                            log.info(f"Could not parse message: {row[1]}")
+                            continue
 
-                    line = "{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(uid, ts, msg["appId"], msg["devId"], msg["hwSerial"], msg["payload"], json.dumps(ttnMsg))
-                    values.writelines((line, ))
+                        ts = datetime.fromisoformat(msg["time"])
 
-                values.seek(0)
+                        line = "{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(uid, ts, msg["appId"], msg["devId"], msg["hwSerial"], msg["payload"], json.dumps(ttnMsg))
+                        values.writelines((line, ))
 
-                with pg.cursor() as pgCursor:
-                    pgCursor.copy_from(values, 'msgs', columns=('uid', 'ts', 'appid', 'devid', 'deveui', 'payload', 'msg'))
+                    values.seek(0)
 
-                values.close()
+                    with pg.cursor() as pgCursor:
+                        pgCursor.copy_from(values, 'msgs', columns=('uid', 'ts', 'appid', 'devid', 'deveui', 'payload', 'msg'))
 
-                cursor.close()
+                    values.close()
 
-                pg.commit()
+                    cursor.close()
+
+                    pg.commit()
+
+    log.info("done")
+
+
+if __name__ == '__main__':
+    do_copy()
