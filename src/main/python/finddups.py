@@ -16,24 +16,24 @@ with open("config.json", "r") as configFile:
 
 postgresCfg = config["postgres"]
 
-currentDate = date(year=2021, month=10, day=1)
-previousDate = currentDate - timedelta(days=32)
+currentDate = datetime.now(timezone.utc)
+previousDate = currentDate - timedelta(days=1)
 
 batchSize = 10000
 
 
-def getPostgresConnection():
+def get_postgres_connection():
     print("Connecting to database...")
     return psycopg2.connect(host=postgresCfg["host"], port=postgresCfg["port"], user=postgresCfg["user"], password=postgresCfg["password"], dbname=postgresCfg["database"])
 
 
-def getNextBatch(cursor, deveui, uid):
+def get_next_batch(cursor, deveui, uid):
     cursor.execute("select uid, msg from msgs where deveui = %s and uid >= %s order by uid limit %s", (deveui, uid, batchSize))
     result = cursor.fetchall()
     return result
 
 
-def findDupes(conn, deveui, minUid):
+def find_dupes(conn, deveui, minUid):
     dupCount = 0
 
     # The deque will only hold the n most recent messages. Adding a new unique
@@ -45,7 +45,7 @@ def findDupes(conn, deveui, minUid):
             print("#", end="", flush=True)
             i = 0
             try:
-                for i, (uid, msg) in enumerate(getNextBatch(cursor, deveui, minUid)):
+                for i, (uid, msg) in enumerate(get_next_batch(cursor, deveui, minUid)):
                     minUid = uid
                     if msg not in recentMsgs:
                         recentMsgs.append(msg)
@@ -69,13 +69,22 @@ def findDupes(conn, deveui, minUid):
     return dupCount
 
 
-with getPostgresConnection() as conn:
-    with conn.cursor() as devQry:
-        devQry.execute("select deveui, min(uid) from msgs WHERE (ts >= %s) GROUP BY deveui", (previousDate,))
-        nDups = 0
-        for (deveui, minUid) in devQry.fetchall():
-            print(deveui)
-            dups = findDupes(conn, deveui, minUid)
-            nDups += dups
-        print(f"Found a total of {nDups} duplicates.")
+def dedup_by_device():
+    with get_postgres_connection() as conn:
+        with conn.cursor() as dev_qry:
+            dev_qry.execute("select deveui, min(uid) from msgs WHERE (ts >= %s) GROUP BY deveui", (previousDate,))
+            nDups = 0
+            for (deveui, minUid) in dev_qry.fetchall():
+                print(deveui)
+                dups = find_dupes(conn, deveui, minUid)
+                nDups += dups
+            print(f"Found a total of {nDups} duplicates.")
 
+
+def main():
+    dedup_by_device()
+
+
+if __name__ == "__main__":
+    # execute only if run as a script
+    main()
