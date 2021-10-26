@@ -17,7 +17,7 @@ with open("config.json", "r") as configFile:
 postgresCfg = config["postgres"]
 
 currentDate = datetime.now(timezone.utc)
-previousDate = currentDate - timedelta(days=7)
+previousDate = currentDate - timedelta(days=1)
 
 batchSize = 10000
 
@@ -88,4 +88,3 @@ def main():
 if __name__ == "__main__":
     # execute only if run as a script
     main()
-

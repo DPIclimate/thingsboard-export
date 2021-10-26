@@ -57,7 +57,7 @@ def v3Parser(msg : dict) -> dict:
     x["hwSerial"] = msg["end_device_ids"]["dev_eui"]
     if "f_port" in msg["uplink_message"]:
         x["port"] = msg["uplink_message"]["f_port"]
-    
+
     if "frm_payload" in msg["uplink_message"]:
         x["payload"] = msg["uplink_message"]["frm_payload"]
     else:

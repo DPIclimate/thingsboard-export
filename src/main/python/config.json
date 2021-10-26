@@ -1,33 +1,32 @@
 {
     "bindir": "/usr/local/bin",
     "fdtBroker": {
-        "host": "equal-saturn.bnr.la",
-        "port": "3306",
-        "user": "bro",
-        "password": "Fishing_Cypress_Sunfish",
-        "database": "LORA-MQTT-BROKER"
+        "host": "...",
+        "port": "...",
+        "user": "...",
+        "password": "...",
+        "database": "..."
     },
     "mysql": {
-        "host": "sherman-pablo.bnr.la",
-        "port": "15382",
-        "user": "broker",
-        "password": "front_elevate_dragonfly",
-        "database": "broker"
+        "host": "...",
+        "port": "...",
+        "user": "...",
+        "password": "...",
+        "database": "..."
     },
     "postgres": {
-        "host": "sherman-pablo.bnr.la",
-        "port": "28157",
-        "user": "postgres",
-        "password": "fence_piston_amethyst",
-        "database": "broker"
+        "host": "...",
+        "port": "...",
+        "user": "...",
+        "password": "...",
+        "database": "..."
     },
     "thingsboard": {
-        "host": "...",
-        "port": "",
         "user": "...",
         "password": "..."
     },
     "ubidots": {
-        "apikey": "BBAU-..."
+        "apikey": "...",
+        "token": "..."
     }
 }
