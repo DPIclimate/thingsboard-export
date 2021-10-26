@@ -4,7 +4,12 @@ target/
 .apt_generated/
 .apt_generated_tests/
 *.csv
+<<<<<<< HEAD
 device-to-ubidots/config.json
 device-to-ubidots/decoded/
 device-to-ubidots/decoded.json
 src/main/python/device-to-ubidots/payloads.json
+=======
+/device-to-ubidots/config.json
+
+>>>>>>> d36f5344632f9e8b95bdfdedd052e6c5f7cfecf5
