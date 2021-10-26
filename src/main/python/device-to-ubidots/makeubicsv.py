@@ -4,7 +4,7 @@ import os
 import pandas as pd
 
 
-def make_csv(payloads_json, device_label, drop_cols, output_dir):
+def make_csv(payloads_json, device_label, drop_cols=[], output_dir=".", split=True):
     s = os.path.splitext(os.path.basename(payloads_json))
 
     dest_dir = f"{output_dir}/{device_label}"
@@ -20,8 +20,10 @@ def make_csv(payloads_json, device_label, drop_cols, output_dir):
     # ie an array of objects, where each object has a key "ts" with an epoch format timestamp and
     # one or more key/value pairs. Numeric values may be in quotes but do not have to be.
     #
+
+    print("Payloads file name: ", payloads_json)
     with open(payloads_json, "r") as payloads_file:
-        msgs = json.load(payloads_file)
+        msgs = json.load(payloads_file, strict=False)
 
     # Load that array of dicts into a DataFrame.
     df = pd.DataFrame(msgs)
@@ -34,12 +36,33 @@ def make_csv(payloads_json, device_label, drop_cols, output_dir):
     df.rename(columns={'ts':'timestamp','hr':'human_readable_timestamp'}, inplace=True)
 
     # Drop columns named with the -x arguments.
-    for a in drop_cols:
-        df.pop(a)
+    if drop_cols is not None:
+        for a in drop_cols:
+            df.pop(a)
 
     fname = f"{dest_dir}/{device_label}.csv"
-    print(fname)
-    df.to_csv(fname, header=True, index=False)
+
+    if split:
+        moisturefname = f"{dest_dir}/{device_label}-1.csv"
+        moistureCols = [col for col in df.columns if "temperature" not in col.lower()]
+        print(moistureCols)
+        moisturedf = df[moistureCols].dropna()
+        print(moisturedf.head())
+
+        tempfname = f"{dest_dir}/{device_label}-2.csv"
+        tempCols = [col for col in df.columns if "moisture" not in col.lower()]
+        print(tempCols)
+        tempDf = df[tempCols].dropna()
+        print(tempDf.head())
+
+        tempDf.to_csv(tempfname, header=True, index=False)
+        moisturedf.to_csv(moisturefname, header=True, index=False)
+
+    else:
+        df.to_csv(fname, header=True, index=False)
+        print(df.head())
+        print("Number of rows: ", len(df))
+        print(fname)
 
 
 def main():
@@ -50,7 +73,7 @@ def main():
     parser.add_argument("-x", help="columns to drop, can be given multiple times", metavar="columns", required=False, dest="drop_cols", action="append")
 
     args = parser.parse_args()
-    make_csv(args.payloads_json, args.device_label, args.drop_cols)
+    make_csv(args.payloads_json, args.device_label, args.drop_cols, args.output_dir)
 
 
 if __name__ == "__main__":

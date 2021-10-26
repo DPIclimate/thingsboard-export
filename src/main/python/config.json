@@ -1,32 +1,25 @@
 {
-    "bindir": "/usr/local/bin",
-    "fdtBroker": {
-        "host": "...",
-        "port": "...",
-        "user": "...",
-        "password": "...",
-        "database": "..."
-    },
-    "mysql": {
-        "host": "...",
-        "port": "...",
-        "user": "...",
-        "password": "...",
-        "database": "..."
-    },
-    "postgres": {
-        "host": "...",
-        "port": "...",
-        "user": "...",
-        "password": "...",
-        "database": "..."
-    },
-    "thingsboard": {
-        "user": "...",
-        "password": "..."
-    },
-    "ubidots": {
-        "apikey": "...",
-        "token": "..."
-    }
+	"bindir": "/usr/local/bin",
+	"mysql": {
+		"host": "sherman-pablo.bnr.la",
+		"port": "15382",
+		"user": "broker",
+		"password": "front_elevate_dragonfly",
+		"database": "broker"
+	},
+	"postgres": {
+		"host": "sherman-pablo.bnr.la",
+		"port": "28157",
+		"user": "postgres",
+		"password": "fence_piston_amethyst",
+		"database": "broker"
+	},
+	"thingsboard": {
+		"user": "david.a.taylor@dpi.nsw.gov.au",
+		"password": "zzz"
+	},
+	"ubidots": {
+		"apikey": "BBAU-43e381112a63f10e45b1cd13378259f2883",
+		"token": "BBAU-VOMMw42nHGcLPKVfBMQxYXDUiL78ln"
+	}
 }

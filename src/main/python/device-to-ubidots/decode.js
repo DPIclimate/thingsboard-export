@@ -84,7 +84,13 @@ for (var i = 0; i < msgs.length; i++) {
             fPort: port
         };
 
-        var val = decodeUplink(input);
+		try {
+        	var val = Decoder(input);
+		}
+		catch {
+        	var val = decodeUplink(input);
+		}
+			
         // Only process messages that decoded properly.
         if (val.hasOwnProperty("data")) {
             var eol = i < lastIdx ? "," : "";
