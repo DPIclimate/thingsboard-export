@@ -83,24 +83,27 @@ def get_raw_payloads(config):
     # Converts to json and then decodes the values
 
     # Setup
-    device_name = "cp-enviropro-03"
-    to_date = 1631796109000 / 1000 # Unix timestamp in sec
+    device_name = "enviro80cm-a0a"
+    to_date = 1631797857000 / 1000 # Unix timestamp in sec
     decoder_f_name = "soil-ict-enviropro80cm" # dont include file extension
-    output_f_name = "centreplus-o01-enviropro-jc0g"
+    output_f_name = "stoneleigh-enviropro80cm-a0a"
 
     pgConnection = postgres_connect(config["postgres"])
-
+	
+    print("Getting raw payloads...")
     with pgConnection as pgConn:
         with pgConn.cursor() as cursor:
-            cursor.execute("select json_agg(msg) from (select uid, msg from msgs where devid = %s and ts < to_timestamp(%s) and ignore = 'f' order by uid LIMIT 20) as x", (device_name, to_date, ))
+            cursor.execute("select json_agg(msg) from (select uid, msg from msgs where devid = %s and ts < to_timestamp(%s) and ignore = 'f' order by uid) as x", (device_name, to_date, ))
             responses = cursor.fetchall()
             with open("payloads.json", "w", encoding="utf-8") as log:
                 for res in responses:
-                    print(res[0])
+                    #print(res[0])
                     json.dump(res[0], log)
 
+    print("Decoding payloads...")
     # Run the payloads.json through decoder
-    os.system(f"node decode.js {decoder_f_name}.js ./payloads.json > {output_f_name}.json")
+    os.system(f"node decode.js {decoder_f_name}.js ./payloads.json > decoded/{output_f_name}.json")
+    print("Finished")
                     
 
 def main():

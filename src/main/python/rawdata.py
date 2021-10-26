@@ -1,5 +1,6 @@
 from io import StringIO
 import json
+import logging
 import mysql.connector
 import os
 import os.path
@@ -9,12 +10,22 @@ from datetime import datetime, tzinfo, timezone
 from dateutil.parser import parse
 from mysql.connector import connect
 
+logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%Y/%m/%d %H:%M:%S')
+
+log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)
+
+os.chdir("/tmp")
+
+batchSize = 10000
+
 config = {}
 with open("config.json", "r") as configFile:
     config = json.load(configFile)
 
 mysqlConfig = config["mysql"]
 pgConfig = config["postgres"]
+
 
 def getTimeStamp(ts : str) -> str:
     # Truncate timestamps with more than 6 fractional second digits
@@ -24,6 +35,7 @@ def getTimeStamp(ts : str) -> str:
 
     return parse(ts).isoformat(timespec="seconds")
 
+
 def v2Parser(msg : dict) -> dict:
     x = {}
     x["version"] = 2
@@ -32,21 +44,10 @@ def v2Parser(msg : dict) -> dict:
     x["hwSerial"] = msg["hardware_serial"]
     x["port"] = msg["port"]
     x["payload"] = msg["payload_raw"]
-
-    # Cannot store a datetime object in the summary object because the json serialiser chokes on it.
-    # Found at least one message where the gateway time field was an empty string so catch the error
-    # and fall back to using the time the message was received by the TTN server which can be a
-    # couple of seconds later.
-    try:
-        x["time"] = parse(msg["metadata"]["gateways"][0]["time"]).isoformat(timespec="seconds")
-    except:
-        #print("Failed to parse time from gateways in message:")
-        #print(json.dumps(msg))
-        x["time"] = getTimeStamp(msg["metadata"]["time"])
-        #print(json.dumps(x, indent=2))
-        #exit(1)
+    x["time"] = getTimeStamp(msg["metadata"]["time"])
 
     return x
+
 
 def v3Parser(msg : dict) -> dict:
     x = {}
@@ -59,58 +60,78 @@ def v3Parser(msg : dict) -> dict:
     
     if "frm_payload" in msg["uplink_message"]:
         x["payload"] = msg["uplink_message"]["frm_payload"]
+    else:
+        x["payload"] = ""
 
-    # Cannot store a datetime object in the summary object because the json serialiser chokes on it.    
-    x["time"] = getTimeStamp(msg["received_at"])
+    x["time"] = getTimeStamp(msg["uplink_message"]["received_at"])
+
     return x
 
-offset = 0
-batchSize = 10000
 
-with connect(host=mysqlConfig['host'], port=mysqlConfig['port'], user=mysqlConfig['user'], password=mysqlConfig['password'], database=mysqlConfig['database']) as connection:
-    with psycopg2.connect(f"host={pgConfig['host']} port={pgConfig['port']} dbname={pgConfig['database']} user={pgConfig['user']} password={pgConfig['password']}") as pg:
+def do_copy():
+    log.info("-----------------------------------------------------------------------------");
+    log.info("Starting copy from mysql to postgres")
 
-        while True:
-            with connection.cursor() as cursor:
-                print("#", end="", flush=True)
+    with connect(host=mysqlConfig['host'], port=mysqlConfig['port'], user=mysqlConfig['user'], password=mysqlConfig['password'], database=mysqlConfig['database']) as raw_data:
+        raw_data.autocommit = True
+        raw_data_max_uid = 0
+        with raw_data.cursor() as rd_cursor:
+            rd_cursor.execute("select max(uid) from RawData")
+            rs = rd_cursor.fetchone()
+            raw_data_max_uid = rs[0]
 
-                cursor.execute("select uid, payload from RawData order by uid limit %s, %s", (offset, batchSize))
+        log.info(f"RawData max uid: {raw_data_max_uid}")
 
-                rowCount = 0
+        with psycopg2.connect(f"host={pgConfig['host']} port={pgConfig['port']} dbname={pgConfig['database']} user={pgConfig['user']} password={pgConfig['password']}") as pg:
+            msgs_max_uid = 0
+            with pg.cursor() as pg_cursor:
+                pg_cursor.execute("select max(uid) from msgs")
+                rs = pg_cursor.fetchone()
+                msgs_max_uid = rs[0]
+                pg.commit() # close the txn opened by the query
 
-                values = StringIO()
+            log.info(f"msgs    max uid: {msgs_max_uid}")
 
-                allRows = list(cursor.fetchall())
-                for row in allRows:
-                    rowCount += 1
-                    uid = row[0]
-                    ttnMsg = json.loads(row[1])
+            while msgs_max_uid < raw_data_max_uid:
+                with raw_data.cursor() as cursor:
+                    log.info(f"Reading batch starting at uid greater than {msgs_max_uid}")
 
-                    if "dev_id" in ttnMsg:
-                        msg = v2Parser(ttnMsg)
-                    elif "end_device_ids" in ttnMsg:
-                        msg = v3Parser(ttnMsg)
-                    else:
-                        print("\nCould not parse message: " + row[1])
-                        continue
+                    cursor.execute("select uid, payload from RawData where uid > %s order by uid limit %s", (msgs_max_uid, batchSize))
 
-                    ts = datetime.fromisoformat(msg["time"])
+                    values = StringIO()
 
-                    line = "{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(uid, ts, msg["appId"], msg["devId"], msg["hwSerial"], msg["payload"], json.dumps(ttnMsg))
-                    values.writelines((line, ))
+                    allRows = list(cursor.fetchall())
+                    for row in allRows:
+                        uid = row[0]
+                        msgs_max_uid = uid
+                        ttnMsg = json.loads(row[1])
 
-                values.seek(0)
+                        if "dev_id" in ttnMsg:
+                            msg = v2Parser(ttnMsg)
+                        elif "end_device_ids" in ttnMsg:
+                            msg = v3Parser(ttnMsg)
+                        else:
+                            log.info(f"Could not parse message: {row[1]}")
+                            continue
 
-                with pg.cursor() as pgCursor:
-                    pgCursor.copy_from(values, 'msgs', columns=('uid', 'ts', 'appid', 'devid', 'deveui', 'payload', 'msg'))
+                        ts = datetime.fromisoformat(msg["time"])
 
-                values.close()
+                        line = "{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(uid, ts, msg["appId"], msg["devId"], msg["hwSerial"], msg["payload"], json.dumps(ttnMsg))
+                        values.writelines((line, ))
 
-                cursor.close()
+                    values.seek(0)
 
-                pg.commit()
+                    with pg.cursor() as pgCursor:
+                        pgCursor.copy_from(values, 'msgs', columns=('uid', 'ts', 'appid', 'devid', 'deveui', 'payload', 'msg'))
 
-                if rowCount < batchSize:
-                    break
+                    values.close()
 
-                offset += rowCount
+                    cursor.close()
+
+                    pg.commit()
+
+    log.info("done")
+
+
+if __name__ == '__main__':
+    do_copy()
