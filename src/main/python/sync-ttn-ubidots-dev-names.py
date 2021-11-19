@@ -8,9 +8,10 @@ config = {}
 with open("config.json", "r") as configFile:
     config = json.load(configFile)
 
-ttnCmd = config["bindir"] + "/ttn-lw-cli"
+ttn_cmd = config["bindir"] + "/ttn-lw-cli"
 
-def ubiGetToken(apiKey: str) -> str:
+
+def ubi_get_token(apiKey: str) -> str:
     headers = { "x-ubidots-apikey": apiKey }
     response = requests.post("https://industrial.api.ubidots.com/api/v1.6/auth/token/", headers=headers)
 
@@ -21,7 +22,8 @@ def ubiGetToken(apiKey: str) -> str:
     body = response.json()
     return body["token"]
 
-def ubiGetDevice(ubiToken: str, devId: str) -> dict:
+
+def ubi_get_device(ubiToken: str, devId: str) -> dict:
     headers = { "X-Auth-Token": ubiToken }
     response = requests.get(f"https://industrial.api.ubidots.com/api/v1.6/devices/{devId}", headers=headers)
 
@@ -30,17 +32,18 @@ def ubiGetDevice(ubiToken: str, devId: str) -> dict:
 
     return response.json()
 
-def ubiUpdateDataSource(ubiToken: str, id: str, info: dict) -> None:
+
+def ubi_update_data_source(ubiToken: str, id: str, info: dict) -> None:
     headers = { "X-Auth-Token": ubiToken, "Content-type": "application/json" }
-    url = f"https://industrial.api.ubidots.com/api/v1.6/datasources/{id}"
+    url = f"https://industrial.api.ubidots.com/api/v2.0/devices/{id}"
     print(url)
     response = requests.patch(url, headers=headers, json=info)
     print(f"PATCH response: {response.status_code}: {response.reason}")
 
 
-def ttnGetDevicesForApp(appId: str) -> dict:
+def ttn_get_devices_for_app(appId: str) -> dict:
     """Get device info for the given TTN v3 application."""
-    result = subprocess.run([ttnCmd, "d", "search", appId, "--all"], capture_output=True, text=True)
+    result = subprocess.run([ttn_cmd, "d", "search", appId, "--all"], capture_output=True, text=True)
 
     if result.returncode != 0:
         print("stderr:", result.stderr)
@@ -49,8 +52,8 @@ def ttnGetDevicesForApp(appId: str) -> dict:
     return json.loads(result.stdout)
 
 
-def ttnGetDevice(appId: str, devId: str) -> dict:
-    result = subprocess.run([ttnCmd, "d", "get", appId, devId, "--name"], capture_output=True, text=True)
+def ttn_get_device(appId: str, devId: str) -> dict:
+    result = subprocess.run([ttn_cmd, "d", "get", appId, devId, "--name"], capture_output=True, text=True)
 
     if result.returncode != 0:
         print("stderr:", result.stderr)
@@ -59,39 +62,57 @@ def ttnGetDevice(appId: str, devId: str) -> dict:
     return json.loads(result.stdout)
 
 
-ubiToken = ubiGetToken(config["ubidots"]["apikey"])
+ubi_token = ubi_get_token(config["ubidots"]["apikey"])
 
-ttnAppId = sys.argv[1]
+ttn_app_id = sys.argv[1]
 
-print(f"Searching for devices in TTN application {ttnAppId}")
-ttnDevs = ttnGetDevicesForApp(ttnAppId)
-for d in ttnDevs:
+print(f"Searching for devices in TTN application {ttn_app_id}")
+ttn_devs = ttn_get_devices_for_app(ttn_app_id)
+for d in ttn_devs:
     eui = d["ids"]["dev_eui"].lower()
-    ttnDevId = d["ids"]["device_id"]
-    ttnDevName = None
+    ttn_dev_id = d["ids"]["device_id"]
+    ttn_dev_name = None
     if "name" in d:
-        ttnDevName = d["name"]
+        ttn_dev_name = d["name"]
 
-    print(f"Found device {ttnDevId} / {ttnDevName}")
+    print(f"Found device {ttn_dev_id} / {ttn_dev_name}")
     try:
-        x = ubiGetDevice(ubiToken, eui)
-        if x == None:
+        ubi_device = ubi_get_device(ubi_token, eui)
+        if ubi_device == None:
             print("Device not in ubidots.")
             continue
 
-        u = {}
-        u["name"] = ttnDevId
-        if ttnDevName is not None:
-            u["description"] = ttnDevName
+        updated_fields = {}
+        updated_fields["name"] = ttn_dev_id
+        if ttn_dev_name is not None:
+            updated_fields["description"] = ttn_dev_name
 
-        u["context"] = { "source": "ttn", "appId": ttnAppId, "devId": ttnDevId}
-        print(json.dumps(u))
+        """
+        Setting device properties does not seem to be as simple as giving a dict of properties.
+        See this JSON from a device where a property was set via the UI:
+
+        "url": "https://industrial.api.ubidots.com/api/v1.6/datasources/616e258886f43b0269f9fadd",
+        "context": {
+            "test1": "value1",
+            "_config": {
+            "test1": {
+                "text": "test1",
+                "type": "text",
+                "description": "Property description here."
+            }
+            }
+        },
+        "tags": [],
+        """
+        #updated_fields["properties"] = { "_source": "ttn", "_appId": ttn_app_id, "_devId": ttn_dev_id}
+
+        print(json.dumps(updated_fields))
         print("=============")
 
-        ubiUpdateDataSource(ubiToken, x["id"], u)
+        ubi_update_data_source(ubi_token, ubi_device["id"], updated_fields)
 
-        x = ubiGetDevice(ubiToken, eui)
-        print(json.dumps(x, indent=2))
+        ubi_device = ubi_get_device(ubi_token, eui)
+        print(json.dumps(ubi_device, indent=2))
 
     except:
         print("Not found")
