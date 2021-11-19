@@ -53,12 +53,20 @@ def exportV2Device(appId: str, appKey: str, deviceId: str) -> dict:
         print("No --dry-run flag.")
         dryRun = ""
 
+    idPrefixFlag = ""
+    idPrefix = ""
+    if args.useIdPrefix:
+        idPrefixFlag = "--dev-id-prefix"
+        idPrefix = "fix"
+
     result = subprocess.run(
-        [args.binDir + "/ttn-lw-migrate", "device", deviceId, dryRun, "--source", "ttnv2", "--ttnv2.app-id", appId, "--ttnv2.app-access-key", appKey, "--ttnv2.frequency-plan-id", "AS_920_923_TTN_AU"],
+        [args.binDir + "/ttn-lw-migrate", "device", deviceId, dryRun, idPrefixFlag, idPrefix, "--source", "ttnv2", "--ttnv2.app-id", appId, "--ttnv2.app-access-key", appKey, "--ttnv2.frequency-plan-id", "AS_920_923_TTN_AU"],
         capture_output=True, text=True
     )
 
     if result.returncode != 0:
+        print("Command failed.")
+        print(result.stderr)
         result.check_returncode()
 
     return json.loads(result.stdout)
@@ -88,6 +96,7 @@ parser.add_argument("-dd", help="TTN v3 device id", metavar="v3DevId", dest="v3D
 parser.add_argument("-dn", help="TTN v3 device name, defaults to the TTN v3 device id", metavar="v3DevName", dest="v3DevName")
 
 parser.add_argument("-x", help="Export device from TTN v3 using the ttn-lw-migrate command", default=False, action="store_const", const=True, dest="exportFromV2")
+parser.add_argument("-p", help="Use the --dev-id-prefix string flag to handle 2 character v2 device ids", default=False, action="store_const", const=True, dest="useIdPrefix")
 parser.add_argument("-ndr", help="No --dry-run flag, the TTN v2 keys will be changed to prevent the v2 device from joining", default=False, action="store_const", const=True, dest="noDryRun")
 
 parser.add_argument("-i", help="Import the  device to TTN v3 using the ttn-lw-cli command", default=False, action="store_const", const=True, dest="importToV3")
@@ -104,14 +113,14 @@ if args.exportFromV2:
         sys.exit(1)
 
 # If the TTN v3 values were not provided for application id, device id, and device name
-# then default them to the TTN v2 values, if they were provided.
-if not args.v3AppId and args.v2AppId != None:
+# then default them to the TTN v2 values.
+if not args.v3AppId:
     args.v3AppId = args.v2AppId.replace("_", "-")
 
-if not args.v3DevId and args.v2DevId != None:
+if not args.v3DevId:
     args.v3DevId = args.v2DevId.replace("_", "-")
 
-if not args.v3DevName and args.v3DevId != None:
+if not args.v3DevName:
     args.v3DevName = args.v3DevId
 
 dev = None
