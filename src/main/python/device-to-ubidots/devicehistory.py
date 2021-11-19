@@ -82,26 +82,35 @@ def get_raw_payloads(config):
     # Queries the history database 
     # Converts to json and then decodes the values
 
-    # Setup
-    device_name = "cp-enviropro-03"
-    to_date = 1631796109000 / 1000 # Unix timestamp in sec
+    # === Setup ===
     decoder_f_name = "soil-ict-enviropro80cm" # dont include file extension
-    output_f_name = "centreplus-o01-enviropro-jc0g"
+
+    # For each device
+    device_name = "enviro80cm-a0a" # On TTNv2
+    output_f_name = "stoneleigh-enviropro80cm-a0a" # On TTNv3
+    ubi_api_label = "001fa14645528962" # API label on ubidots
+    to_date = 1631797857000 # Unix timestamp in sec
+
+    # === End Setup ===
+    to_date = to_date / 1000
 
     pgConnection = postgres_connect(config["postgres"])
 
+    print("getting messages from history db...")
     with pgConnection as pgConn:
         with pgConn.cursor() as cursor:
-            cursor.execute("select json_agg(msg) from (select uid, msg from msgs where devid = %s and ts < to_timestamp(%s) and ignore = 'f' order by uid LIMIT 20) as x", (device_name, to_date, ))
+            cursor.execute("select json_agg(msg) from (select uid, msg from msgs where devid = %s and ts < to_timestamp(%s) and ignore = 'f' order by uid) as x", (device_name, to_date, ))
             responses = cursor.fetchall()
             with open("payloads.json", "w", encoding="utf-8") as log:
                 for res in responses:
-                    print(res[0])
                     json.dump(res[0], log)
 
     # Run the payloads.json through decoder
-    os.system(f"node decode.js {decoder_f_name}.js ./payloads.json > {output_f_name}.json")
+    print("decoding messages...")
+    os.system(f"node decode.js decoders/{decoder_f_name}.js ./payloads.json > decoded/{output_f_name}.json")
                     
+    print("converting to csv...")
+    os.system(f"python3 makeubicsv.py -d decoded_csvs -m decoded/{output_f_name}.json -n {ubi_api_label}")
 
 def main():
     config = get_config("config.json")
