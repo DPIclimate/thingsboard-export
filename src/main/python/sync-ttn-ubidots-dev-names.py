@@ -53,7 +53,7 @@ def ttn_get_devices_for_app(appId: str) -> dict:
 
 
 def ttn_get_device(appId: str, devId: str) -> dict:
-    result = subprocess.run([ttn_cmd, "d", "get", appId, devId, "--name"], capture_output=True, text=True)
+    result = subprocess.run([ttn_cmd, "d", "get", appId, devId, "--name", "--description"], capture_output=True, text=True)
 
     if result.returncode != 0:
         print("stderr:", result.stderr)
@@ -71,11 +71,10 @@ ttn_devs = ttn_get_devices_for_app(ttn_app_id)
 for d in ttn_devs:
     eui = d["ids"]["dev_eui"].lower()
     ttn_dev_id = d["ids"]["device_id"]
-    ttn_dev_name = None
-    if "name" in d:
-        ttn_dev_name = d["name"]
+    ttn_dev_name = d["name"] if "name" in d else ttn_dev_id
+    ttn_dev_desc = d["description"] if "description" in d else None
 
-    print(f"Found device {ttn_dev_id} / {ttn_dev_name}")
+    print(f"Found device {ttn_dev_id} / {ttn_dev_name} / {ttn_dev_desc}")
     try:
         ubi_device = ubi_get_device(ubi_token, eui)
         if ubi_device == None:
@@ -83,9 +82,9 @@ for d in ttn_devs:
             continue
 
         updated_fields = {}
-        updated_fields["name"] = ttn_dev_id
-        if ttn_dev_name is not None:
-            updated_fields["description"] = ttn_dev_name
+        updated_fields["name"] = ttn_dev_name
+        if ttn_dev_desc is not None:
+            updated_fields["description"] = ttn_dev_desc
 
         """
         Setting device properties does not seem to be as simple as giving a dict of properties.
